@@ -24,6 +24,15 @@ fn compile_json_returns_parameterized_plan() {
 }
 
 #[test]
+fn query_requires_connection_configuration() {
+    let output = run(&["query", "--query", "from events"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("invalid LQL connection configuration"));
+    assert!(!stderr.contains("password"));
+}
+
+#[test]
 fn invalid_json_query_returns_structured_diagnostics() {
     let output = run(&["check", "--json", "from events | where missing = 1"]);
     assert!(!output.status.success());

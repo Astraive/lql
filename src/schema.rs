@@ -42,6 +42,8 @@ impl Schema {
             ("service", FieldType::String, "Service name"),
             ("version", FieldType::String, "Service version"),
             ("environment", FieldType::String, "Deployment environment"),
+            ("collector", FieldType::String, "Collector scope"),
+            ("attrs", FieldType::Object, "Structured dynamic attributes"),
             ("event", FieldType::String, "Event name"),
             ("kind", FieldType::String, "Event kind (event, log, metric, span)"),
             ("level", FieldType::String, "Log level (debug, info, notice, warn, error, fatal)"),

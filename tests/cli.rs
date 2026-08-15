@@ -8,7 +8,7 @@ fn run(args: &[&str]) -> std::process::Output {
 }
 
 #[test]
-fn compile_json_returns_target_and_sql() {
+fn compile_json_returns_parameterized_plan() {
     let output = run(&[
         "compile",
         "--json",
@@ -18,14 +18,20 @@ fn compile_json_returns_target_and_sql() {
     let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(body["ok"], true);
     assert_eq!(body["target"], "duckdb");
-    assert!(body["sql"].as_str().unwrap().contains("LIMIT 2"));
+    assert!(body["sql"].as_str().unwrap().contains("LIMIT ?"));
+    assert_eq!(body["parameters"][0]["value"], "error");
+    assert_eq!(body["parameters"][1]["value"], 2);
 }
 
 #[test]
-fn invalid_json_query_returns_structured_error() {
+fn invalid_json_query_returns_structured_diagnostics() {
     let output = run(&["check", "--json", "from events | where missing = 1"]);
     assert!(!output.status.success());
     let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(body["ok"], false);
-    assert!(body["error"].as_str().unwrap().contains("unknown field"));
+    assert!(body["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("unknown field"));
+    assert_eq!(body["diagnostics"][0]["code"], "LQL102");
 }

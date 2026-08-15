@@ -173,6 +173,7 @@ fn compile_expr_with_aliases(
                 ))
             }
         }
+        Expr::Parameter(_) => Ok("?".to_string()),
         Expr::Literal(lit) => compile_literal(lit),
         Expr::BinaryOp { left, op, right } => {
             let l = compile_expr_with_aliases(left, schema, aliases)?;

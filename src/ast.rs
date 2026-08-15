@@ -46,6 +46,7 @@ pub enum Source {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Expr {
     Column(String),
+    Parameter(String),
     Literal(Literal),
     BinaryOp {
         left: Box<Expr>,

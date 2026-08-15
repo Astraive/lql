@@ -74,21 +74,21 @@ fn bench_lexer(c: &mut Criterion) {
     c.bench_function("lexer_simple", |b| {
         b.iter(|| {
             let tokens = Lexer::new(black_box(SIMPLE_QUERY)).tokenize();
-            black_box(tokens);
+            let _ = black_box(tokens);
         })
     });
 
     c.bench_function("lexer_complex", |b| {
         b.iter(|| {
             let tokens = Lexer::new(black_box(COMPLEX_QUERY)).tokenize();
-            black_box(tokens);
+            let _ = black_box(tokens);
         })
     });
 
     c.bench_function("lexer_large", |b| {
         b.iter(|| {
             let tokens = Lexer::new(black_box(LARGE_QUERY)).tokenize();
-            black_box(tokens);
+            let _ = black_box(tokens);
         })
     });
 }
@@ -99,7 +99,7 @@ fn bench_parser(c: &mut Criterion) {
         b.iter(|| {
             let mut parser = Parser::new(black_box(tokens.clone()));
             let pipeline = parser.parse();
-            black_box(pipeline);
+            let _ = black_box(pipeline);
         })
     });
 
@@ -108,7 +108,7 @@ fn bench_parser(c: &mut Criterion) {
         b.iter(|| {
             let mut parser = Parser::new(black_box(tokens.clone()));
             let pipeline = parser.parse();
-            black_box(pipeline);
+            let _ = black_box(pipeline);
         })
     });
 
@@ -117,7 +117,7 @@ fn bench_parser(c: &mut Criterion) {
         b.iter(|| {
             let mut parser = Parser::new(black_box(tokens.clone()));
             let pipeline = parser.parse();
-            black_box(pipeline);
+            let _ = black_box(pipeline);
         })
     });
 }
@@ -127,42 +127,42 @@ fn bench_ast_build(c: &mut Criterion) {
     c.bench_function("ast_build_simple", |b| {
         b.iter(|| {
             let pipeline = parse(black_box(SIMPLE_QUERY));
-            black_box(pipeline);
+            let _ = black_box(pipeline);
         })
     });
 
     c.bench_function("ast_build_medium", |b| {
         b.iter(|| {
             let pipeline = parse(black_box(MEDIUM_QUERY));
-            black_box(pipeline);
+            let _ = black_box(pipeline);
         })
     });
 
     c.bench_function("ast_build_complex", |b| {
         b.iter(|| {
             let pipeline = parse(black_box(COMPLEX_QUERY));
-            black_box(pipeline);
+            let _ = black_box(pipeline);
         })
     });
 
     c.bench_function("ast_build_timeseries", |b| {
         b.iter(|| {
             let pipeline = parse(black_box(TIMESERIES_QUERY));
-            black_box(pipeline);
+            let _ = black_box(pipeline);
         })
     });
 
     c.bench_function("ast_build_project_extend", |b| {
         b.iter(|| {
             let pipeline = parse(black_box(PROJECT_EXTEND_QUERY));
-            black_box(pipeline);
+            let _ = black_box(pipeline);
         })
     });
 
     c.bench_function("ast_build_function_heavy", |b| {
         b.iter(|| {
             let pipeline = parse(black_box(FUNCTION_HEAVY_QUERY));
-            black_box(pipeline);
+            let _ = black_box(pipeline);
         })
     });
 }
@@ -171,42 +171,42 @@ fn bench_sql_compilation(c: &mut Criterion) {
     c.bench_function("compile_duckdb_simple", |b| {
         b.iter(|| {
             let sql = compile_to_duckdb(black_box(SIMPLE_QUERY));
-            black_box(sql);
+            let _ = black_box(sql);
         })
     });
 
     c.bench_function("compile_duckdb_complex", |b| {
         b.iter(|| {
             let sql = compile_to_duckdb(black_box(COMPLEX_QUERY));
-            black_box(sql);
+            let _ = black_box(sql);
         })
     });
 
     c.bench_function("compile_duckdb_large", |b| {
         b.iter(|| {
             let sql = compile_to_duckdb(black_box(LARGE_QUERY));
-            black_box(sql);
+            let _ = black_box(sql);
         })
     });
 
     c.bench_function("compile_duckdb_timeseries", |b| {
         b.iter(|| {
             let sql = compile_to_duckdb(black_box(TIMESERIES_QUERY));
-            black_box(sql);
+            let _ = black_box(sql);
         })
     });
 
     c.bench_function("compile_duckdb_project_extend", |b| {
         b.iter(|| {
             let sql = compile_to_duckdb(black_box(PROJECT_EXTEND_QUERY));
-            black_box(sql);
+            let _ = black_box(sql);
         })
     });
 
     c.bench_function("compile_duckdb_function_heavy", |b| {
         b.iter(|| {
             let sql = compile_to_duckdb(black_box(FUNCTION_HEAVY_QUERY));
-            black_box(sql);
+            let _ = black_box(sql);
         })
     });
 
@@ -214,7 +214,7 @@ fn bench_sql_compilation(c: &mut Criterion) {
     c.bench_function("compile_clickhouse_complex", |b| {
         b.iter(|| {
             let sql = lql::compile_to_clickhouse(black_box(COMPLEX_QUERY));
-            black_box(sql);
+            let _ = black_box(sql);
         })
     });
 
@@ -225,7 +225,7 @@ fn bench_sql_compilation(c: &mut Criterion) {
         b.iter(|| {
             let sql =
                 lql::compiler::compile(black_box(&pipeline), Target::DuckDB, black_box(&schema));
-            black_box(sql);
+            let _ = black_box(sql);
         })
     });
 
@@ -238,7 +238,7 @@ fn bench_sql_compilation(c: &mut Criterion) {
                 Target::ClickHouse,
                 black_box(&schema_ch),
             );
-            black_box(sql);
+            let _ = black_box(sql);
         })
     });
 }
@@ -247,7 +247,7 @@ fn bench_invalid_query(c: &mut Criterion) {
     c.bench_function("lexer_invalid_chars", |b| {
         b.iter(|| {
             let tokens = Lexer::new(black_box(INVALID_QUERY)).tokenize();
-            black_box(tokens);
+            let _ = black_box(tokens);
         })
     });
 
@@ -257,7 +257,7 @@ fn bench_invalid_query(c: &mut Criterion) {
             if let Ok(tokens) = Lexer::new(black_box(SYNTAX_ERROR_QUERY)).tokenize() {
                 let mut parser = Parser::new(tokens);
                 let result = parser.parse();
-                black_box(result);
+                let _ = black_box(result);
             }
         })
     });
@@ -265,7 +265,7 @@ fn bench_invalid_query(c: &mut Criterion) {
     c.bench_function("compile_invalid_query", |b| {
         b.iter(|| {
             let result = compile_to_duckdb(black_box(INVALID_QUERY));
-            black_box(result);
+            let _ = black_box(result);
         })
     });
 }
@@ -281,7 +281,7 @@ fn bench_large_query(c: &mut Criterion) {
     c.bench_function("lexer_50_where_clauses", |b| {
         b.iter(|| {
             let tokens = Lexer::new(black_box(&large_where)).tokenize();
-            black_box(tokens);
+            let _ = black_box(tokens);
         })
     });
 
@@ -290,14 +290,14 @@ fn bench_large_query(c: &mut Criterion) {
         b.iter(|| {
             let mut parser = Parser::new(black_box(tokens.clone()));
             let pipeline = parser.parse();
-            black_box(pipeline);
+            let _ = black_box(pipeline);
         })
     });
 
     c.bench_function("compile_50_where_clauses", |b| {
         b.iter(|| {
             let sql = compile_to_duckdb(black_box(&large_where));
-            black_box(sql);
+            let _ = black_box(sql);
         })
     });
 
@@ -310,7 +310,7 @@ fn bench_large_query(c: &mut Criterion) {
     c.bench_function("compile_many_aggregations", |b| {
         b.iter(|| {
             let sql = compile_to_duckdb(black_box(large_summarize));
-            black_box(sql);
+            let _ = black_box(sql);
         })
     });
 }

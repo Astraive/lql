@@ -11,9 +11,11 @@ pub enum Token {
     NullLit,
     DurationLit(Duration),
 
-    // Identifiers
-    Ident(String),
+    // Named parameter, written as `$name`
+    Parameter(String),
 
+    // Keywords
+    Ident(String),
     // Keywords
     From,
     Where,
@@ -85,6 +87,7 @@ impl std::fmt::Display for Token {
             Token::BoolLit(b) => write!(f, "{}", b),
             Token::NullLit => write!(f, "null"),
             Token::DurationLit(d) => write!(f, "{}{:?}", d.value, d.unit),
+            Token::Parameter(name) => write!(f, "${}", name),
             Token::Ident(s) => write!(f, "{}", s),
             _ => write!(f, "{:?}", self),
         }
@@ -93,6 +96,7 @@ impl std::fmt::Display for Token {
 
 pub struct Lexer {
     input: Vec<char>,
+    byte_offsets: Vec<usize>,
     pos: usize,
 }
 
@@ -100,8 +104,16 @@ impl Lexer {
     pub fn new(input: &str) -> Self {
         Self {
             input: input.chars().collect(),
+            byte_offsets: input.char_indices().map(|(offset, _)| offset).collect(),
             pos: 0,
         }
+    }
+
+    fn byte_pos(&self) -> usize {
+        self.byte_offsets
+            .get(self.pos)
+            .copied()
+            .unwrap_or_else(|| self.byte_offsets.last().copied().unwrap_or(0))
     }
 
     pub fn tokenize(&mut self) -> Result<Vec<Token>, LqlError> {
@@ -113,6 +125,23 @@ impl Lexer {
             }
             let ch = self.input[self.pos];
             match ch {
+                '$' => {
+                    self.pos += 1;
+                    let start = self.pos;
+                    while self.pos < self.input.len()
+                        && (self.input[self.pos].is_ascii_alphanumeric() || self.input[self.pos] == '_')
+                    {
+                        self.pos += 1;
+                    }
+                    if start == self.pos {
+                        return Err(LqlError::UnexpectedChar {
+                            char: '$',
+                            pos: self.byte_pos().saturating_sub(1),
+                        });
+                    }
+                    let name: String = self.input[start..self.pos].iter().collect();
+                    tokens.push(Token::Parameter(name));
+                }
                 '|' => {
                     if self.peek_ahead(1) == Some('|') {
                         tokens.push(Token::Or);
@@ -179,7 +208,7 @@ impl Lexer {
                     } else {
                         return Err(LqlError::UnexpectedChar {
                             char: ch,
-                            pos: self.pos,
+                            pos: self.byte_pos(),
                         });
                     }
                 }
@@ -223,7 +252,7 @@ impl Lexer {
                 _ => {
                     return Err(LqlError::UnexpectedChar {
                         char: ch,
-                        pos: self.pos,
+                        pos: self.byte_pos(),
                     });
                 }
             }

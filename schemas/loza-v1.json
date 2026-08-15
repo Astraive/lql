@@ -1,0 +1,1053 @@
+{
+  "schema_version": "v1",
+  "source_content_sha256": "3acb3de7d40519a5d39d5068b5e195017f8198a0f43e2097ded58a7deb89dc12",
+  "source_revision": "https://github.com/Astraive/loza/spec/schemas/json/event.schema.json",
+  "sources": {
+    "events": {
+      "fields": [
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "attrs",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "array<dynamic>",
+          "name": "checkpoints",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "collector",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "int",
+          "name": "delivery_attempts",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "deployment",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "deployment.environment",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "deployment.region",
+          "nullable": true,
+          "physical": {
+            "column": "region",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "int",
+          "name": "duration_ms",
+          "nullable": true,
+          "physical": {
+            "column": "duration_ms",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "environment",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "error",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "error.cause",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "error.code",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "error.message",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "bool",
+          "name": "error.retriable",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "error.stack",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "error.type",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "array<dynamic>",
+          "name": "errors",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "event",
+          "nullable": false,
+          "physical": {
+            "column": "event_name",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "event_id",
+          "nullable": false,
+          "physical": {
+            "column": "event_id",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "event_state",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "event_version",
+          "nullable": false,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "finished_at",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "array<dynamic>",
+          "name": "groups",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "http",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "http.client_ip",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "http.host",
+          "nullable": true,
+          "physical": {
+            "column": "host",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "http.method",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "http.path",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "http.route",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "int",
+          "name": "http.status_code",
+          "nullable": true,
+          "physical": {
+            "column": "http_status",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "http.url",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "http.user_agent",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "incident_id",
+          "nullable": true,
+          "physical": {
+            "column": "incident_id",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "kind",
+          "nullable": false,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "level",
+          "nullable": true,
+          "physical": {
+            "column": "level",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "array<dynamic>",
+          "name": "links",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "message",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "method",
+          "nullable": true,
+          "physical": {
+            "column": "http_method",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "organization",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "organization.id",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "outcome",
+          "nullable": true,
+          "physical": {
+            "column": "outcome",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "bool",
+          "name": "partial",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "partial_reason",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "path",
+          "nullable": true,
+          "physical": {
+            "column": "http_path",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "pii",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "pii.classification",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "bool",
+          "name": "pii.redacted",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "pii.redaction_policy",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "array<dynamic>",
+          "name": "processes",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "redaction",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "release",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "request_id",
+          "nullable": true,
+          "physical": {
+            "column": "request_id",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "resource",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "route",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "sampling",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "schema_version",
+          "nullable": false,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "sdk",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "sdk.language",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "sdk.name",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "sdk.version",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "dynamic",
+          "name": "service",
+          "nullable": false,
+          "physical": {
+            "column": "service",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "source",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "source.instance_id",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "dynamic",
+          "name": "source.sdk",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "span_id",
+          "nullable": true,
+          "physical": {
+            "column": "span_id",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "started_at",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "int",
+          "name": "status_code",
+          "nullable": true,
+          "physical": {
+            "column": "status_code",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "tenant",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "tenant.id",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "array<dynamic>",
+          "name": "timers",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "timestamp",
+          "nullable": false,
+          "physical": {
+            "column": "timestamp",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "trace_flags",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "trace_id",
+          "nullable": true,
+          "physical": {
+            "column": "trace_id",
+            "source": "events",
+            "storage": "projection"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "user",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "user.email",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "user.id",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "user.plan",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "version",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        },
+        {
+          "description": "",
+          "field_type": "object",
+          "name": "workspace",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": true
+        },
+        {
+          "description": "",
+          "field_type": "string",
+          "name": "workspace.id",
+          "nullable": true,
+          "physical": {
+            "column": "raw",
+            "source": "events",
+            "storage": "raw"
+          },
+          "sensitivity": "public",
+          "structured": false
+        }
+      ],
+      "physical": "events",
+      "row_identity": "event_id"
+    }
+  }
+}

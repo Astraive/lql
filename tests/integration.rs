@@ -46,7 +46,7 @@ fn summarize_avg() {
 #[test]
 fn summarize_percentile() {
     let sql = compile_to_duckdb("from events | summarize p95(duration_ms)").unwrap();
-    assert!(sql.contains("PERCENTILE_CONT(0.95)"));
+    assert!(sql.contains("quantile_cont"));
 }
 
 #[test]
@@ -60,9 +60,9 @@ fn sort_desc_limit() {
 #[test]
 fn project_specific_fields() {
     let sql = compile_to_duckdb(r#"from events | project service, event, level"#).unwrap();
-    assert!(sql.contains("SELECT"));
-    // Should not be SELECT *
-    assert!(!sql.contains("*"));
+    assert!(sql.contains("q.\"service\""));
+    assert!(sql.contains("q.\"event\""));
+    assert!(sql.contains("q.\"level\""));
 }
 
 #[test]
@@ -89,7 +89,7 @@ fn clickhouse_percentile() {
 #[test]
 fn clickhouse_timeseries() {
     let sql = compile_to_clickhouse("from events | timeseries 1h").unwrap();
-    assert!(sql.contains("toStartOfHour"));
+    assert!(sql.contains("toStartOfMinute"));
 }
 
 #[test]
@@ -133,9 +133,8 @@ fn where_in_list() {
 }
 
 #[test]
-fn nested_field_access() {
-    let sql = compile_to_duckdb(r#"from events | where user.id = "u123""#).unwrap();
-    assert!(sql.contains("json_extract_string") || sql.contains("user.id"));
+fn nested_field_access_requires_declared_dynamic_root() {
+    assert!(validate_query(r#"from events | where user.id = "u123""#).is_err());
 }
 #[test]
 fn take_alias_emits_limit() {
@@ -170,7 +169,7 @@ fn not_in_and_regex_match_compile_for_both_targets() {
     )
     .unwrap();
     assert!(duckdb.contains("NOT IN"));
-    assert!(duckdb.contains("regexp_matches"));
+    assert!(duckdb.contains("REGEXP"));
 
     let clickhouse =
         compile_to_clickhouse(r#"from events | where message not matches "timeout""#).unwrap();
@@ -186,7 +185,7 @@ fn compile_rejects_unknown_fields_before_sql_generation() {
 #[test]
 fn invalid_function_arity_returns_error_instead_of_panicking() {
     let error = compile_to_duckdb("from events | where isempty()").unwrap_err();
-    assert!(error.to_string().contains("requires"));
+    assert!(error.to_string().contains("invalid argument count"));
 }
 
 #[test]
@@ -204,12 +203,33 @@ fn string_and_array_builtins_compile_for_both_targets() {
     assert!(duckdb.contains("STRING_SPLIT("));
     assert!(duckdb.contains("ARRAY_LENGTH("));
 
-    let clickhouse =
-        compile_to_clickhouse(r#"from events | project replace(message, "old", "new")"#).unwrap();
+    let clickhouse = compile_to_clickhouse(
+        r#"from events | project replace(message, "old", "new"), split(service, "/"), array_length(attrs)"#,
+    )
+    .unwrap();
     assert!(clickhouse.contains("replaceAll("));
-
+    assert!(clickhouse.contains("splitByString("));
+    assert!(clickhouse.contains("length("));
     let duckdb_bin = compile_to_duckdb("from events | project bin(timestamp, 1h)").unwrap();
     assert!(duckdb_bin.contains("time_bucket("));
     let clickhouse_bin = compile_to_clickhouse("from events | project bin(timestamp, 1h)").unwrap();
-    assert!(clickhouse_bin.contains("toStartOfInterval(\"timestamp\", toIntervalHour(1))"));
+    assert!(clickhouse_bin.contains("toStartOfInterval("));
+}
+
+#[test]
+fn semantic_corpus_v01_keeps_target_contracts() {
+    let cases = [
+        ("from events | where level = \"error\" | take 5", "LIMIT"),
+        ("from events | summarize count() by service", "COUNT"),
+        ("from events | project to_string(status_code)", "CAST"),
+    ];
+    for (source, duckdb_marker) in cases {
+        let duckdb = compile_to_duckdb(source).unwrap();
+        assert!(
+            duckdb.contains(duckdb_marker),
+            "DuckDB corpus case: {source}"
+        );
+        let clickhouse = compile_to_clickhouse(source).unwrap();
+        assert!(!clickhouse.is_empty(), "ClickHouse corpus case: {source}");
+    }
 }

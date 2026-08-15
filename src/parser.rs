@@ -487,6 +487,10 @@ impl Parser {
                 self.advance();
                 Ok(Expr::Literal(Literal::Duration(d)))
             }
+            Token::Parameter(name) => {
+                self.advance();
+                Ok(Expr::Parameter(name))
+            }
             Token::Star => {
                 self.advance();
                 Ok(Expr::Wildcard)
@@ -590,6 +594,27 @@ impl Parser {
             Token::Ident(name) => {
                 self.advance();
                 Ok(name)
+            }
+            // Aggregate names are valid output aliases (notably `as count`).
+            Token::Count => {
+                self.advance();
+                Ok("count".to_string())
+            }
+            Token::Sum => {
+                self.advance();
+                Ok("sum".to_string())
+            }
+            Token::Avg => {
+                self.advance();
+                Ok("avg".to_string())
+            }
+            Token::Min => {
+                self.advance();
+                Ok("min".to_string())
+            }
+            Token::Max => {
+                self.advance();
+                Ok("max".to_string())
             }
             _ => Err(self.unexpected("identifier")),
         }
@@ -702,6 +727,16 @@ mod tests {
         if let Statement::Where(Expr::BinaryOp { .. }) = &p.statements[1] {
             // user.id is parsed as Column("user") Dot Column("id") — need dotted column support
             // For now, just verify it parses
+        }
+    }
+
+    #[test]
+    fn named_parameter_parses_as_expression() {
+        let pipeline = parse("from events | where event_id = $id");
+        if let Statement::Where(Expr::BinaryOp { right, .. }) = &pipeline.statements[1] {
+            assert_eq!(**right, Expr::Parameter("id".to_string()));
+        } else {
+            panic!("expected parameter comparison");
         }
     }
 }

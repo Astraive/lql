@@ -33,6 +33,7 @@ pub fn parse(input: &str) -> Result<Pipeline, LqlError> {
 pub fn compile_to_duckdb(input: &str) -> Result<String, LqlError> {
     let pipeline = parse(input)?;
     let schema = Schema::duckdb_default();
+    validate::validate(&pipeline, &schema)?;
     compiler::compile(&pipeline, Target::DuckDB, &schema)
 }
 
@@ -40,6 +41,7 @@ pub fn compile_to_duckdb(input: &str) -> Result<String, LqlError> {
 pub fn compile_to_clickhouse(input: &str) -> Result<String, LqlError> {
     let pipeline = parse(input)?;
     let schema = Schema::clickhouse_default();
+    validate::validate(&pipeline, &schema)?;
     compiler::compile(&pipeline, Target::ClickHouse, &schema)
 }
 

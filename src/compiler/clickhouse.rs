@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::error::LqlError;
-use crate::functions::duration_to_clickhouse_interval;
+use crate::functions::{duration_to_clickhouse_interval, validate_function_arity};
 use crate::schema::Schema;
 
 /// Compile a parsed LQL pipeline into ClickHouse SQL.
@@ -11,8 +11,8 @@ pub fn compile(pipeline: &Pipeline, schema: &Schema) -> Result<String, LqlError>
     let mut group_by = Vec::new();
     let mut order_by = None;
     let mut limit = None;
+    let mut distinct = false;
     let mut extended_columns: Vec<String> = Vec::new();
-
     for stmt in &pipeline.statements {
         match stmt {
             Statement::From(source) => {
@@ -36,6 +36,13 @@ pub fn compile(pipeline: &Pipeline, schema: &Schema) -> Result<String, LqlError>
             }
             Statement::Limit(n) => {
                 limit = Some(*n);
+            }
+            Statement::Distinct(fields) => {
+                distinct = true;
+                select_cols = fields
+                    .iter()
+                    .map(|e| compile_expr(e, schema))
+                    .collect::<Result<Vec<_>, _>>()?;
             }
             Statement::Project(fields) => {
                 select_cols = fields
@@ -69,10 +76,15 @@ pub fn compile(pipeline: &Pipeline, schema: &Schema) -> Result<String, LqlError>
     }
 
     let mut sql = String::new();
+    let distinct_prefix = if distinct { " DISTINCT" } else { "" };
     if select_cols.is_empty() {
-        sql.push_str("SELECT *");
+        sql.push_str(&format!("SELECT{} *", distinct_prefix));
     } else {
-        sql.push_str(&format!("SELECT {}", select_cols.join(", ")));
+        sql.push_str(&format!(
+            "SELECT{} {}",
+            distinct_prefix,
+            select_cols.join(", ")
+        ));
     }
     sql.push_str(&format!(" FROM {}", escape_ident(&table)));
     if !where_clauses.is_empty() {
@@ -129,7 +141,25 @@ fn compile_expr_with_aliases(
                     l,
                     escape_like_pattern(&strip_quotes(&r))
                 )),
+                BinOp::Matches => Ok(format!("match({}, {})", l, r)),
+                BinOp::NotMatches => Ok(format!("NOT match({}, {})", l, r)),
                 _ => Ok(format!("{} {} {}", l, op, r)),
+            }
+        }
+        Expr::Between {
+            expr,
+            low,
+            high,
+            negated,
+        } => {
+            let value = compile_expr_with_aliases(expr, schema, aliases)?;
+            let low = compile_expr_with_aliases(low, schema, aliases)?;
+            let high = compile_expr_with_aliases(high, schema, aliases)?;
+            let condition = format!("{} >= {} AND {} <= {}", value, low, value, high);
+            if *negated {
+                Ok(format!("NOT ({})", condition))
+            } else {
+                Ok(condition)
             }
         }
         Expr::UnaryOp { op, expr } => {
@@ -140,13 +170,22 @@ fn compile_expr_with_aliases(
             }
         }
         Expr::Function { name, args } => compile_function(name, args, schema),
-        Expr::InList { expr, values } => {
+        Expr::InList {
+            expr,
+            values,
+            negated,
+        } => {
             let col = compile_expr_with_aliases(expr, schema, aliases)?;
             let vals: Vec<String> = values
                 .iter()
                 .map(|v| compile_expr_with_aliases(v, schema, aliases))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(format!("{} IN ({})", col, vals.join(", ")))
+            Ok(format!(
+                "{} {}IN ({})",
+                col,
+                if *negated { "NOT " } else { "" },
+                vals.join(", ")
+            ))
         }
         Expr::Wildcard => Ok("*".to_string()),
     }
@@ -219,12 +258,27 @@ fn compile_agg(agg: &AggExpr, schema: &Schema) -> Result<String, LqlError> {
 }
 
 fn compile_function(name: &str, args: &[Expr], schema: &Schema) -> Result<String, LqlError> {
+    validate_function_arity(name, args)?;
     let compiled_args: Vec<String> = args
         .iter()
         .map(|a| compile_expr(a, schema))
         .collect::<Result<Vec<_>, _>>()?;
 
     match name.to_lowercase().as_str() {
+        "bin" => {
+            if let [Expr::Column(_), Expr::Literal(Literal::Duration(d))] = args {
+                Ok(format!(
+                    "toStartOfInterval({}, {})",
+                    compiled_args[0],
+                    duration_to_clickhouse_interval(d)
+                ))
+            } else {
+                Err(LqlError::Compile {
+                    message: "bin() requires a field and duration interval".to_string(),
+                    span: None,
+                })
+            }
+        }
         "ago" => {
             if let Some(Expr::Literal(Literal::Duration(d))) = args.first() {
                 Ok(format!("now() - {}", duration_to_clickhouse_interval(d)))
@@ -249,6 +303,15 @@ fn compile_function(name: &str, args: &[Expr], schema: &Schema) -> Result<String
         "tolower" => Ok(format!("lower({})", compiled_args[0])),
         "toupper" => Ok(format!("upper({})", compiled_args[0])),
         "trim" => Ok(format!("trim({})", compiled_args[0])),
+        "replace" => Ok(format!(
+            "replaceAll({}, {}, {})",
+            compiled_args[0], compiled_args[1], compiled_args[2]
+        )),
+        "split" => Ok(format!(
+            "splitByString({}, {})",
+            compiled_args[1], compiled_args[0]
+        )),
+        "array_length" => Ok(format!("length({})", compiled_args[0])),
         "to_string" => Ok(format!("toString({})", compiled_args[0])),
         "to_int" => Ok(format!("toInt64({})", compiled_args[0])),
         "to_float" => Ok(format!("toFloat64({})", compiled_args[0])),

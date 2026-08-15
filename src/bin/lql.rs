@@ -42,7 +42,7 @@ fn main() {
             }
 
             match command {
-                "compile" => match loza_lql::compile_to_duckdb(query) {
+                "compile" => match lql::compile_to_duckdb(query) {
                     Ok(sql) => emit_success(
                         json_output,
                         json!({"ok": true, "target": "duckdb", "sql": sql}),
@@ -50,7 +50,7 @@ fn main() {
                     ),
                     Err(err) => emit_error(json_output, &err.to_string()),
                 },
-                "compile-ch" => match loza_lql::compile_to_clickhouse(query) {
+                "compile-ch" => match lql::compile_to_clickhouse(query) {
                     Ok(sql) => emit_success(
                         json_output,
                         json!({"ok": true, "target": "clickhouse", "sql": sql}),
@@ -58,7 +58,7 @@ fn main() {
                     ),
                     Err(err) => emit_error(json_output, &err.to_string()),
                 },
-                "check" => match loza_lql::validate_query(query) {
+                "check" => match lql::validate_query(query) {
                     Ok(()) if json_output => println!("{}", json!({"ok": true, "valid": true})),
                     Ok(()) => println!("ok"),
                     Err(err) => emit_error(json_output, &err.to_string()),
@@ -67,7 +67,7 @@ fn main() {
             }
         }
         "fields" => {
-            let fields = loza_lql::known_fields();
+            let fields = lql::known_fields();
             if json_output {
                 println!("{}", json!({"ok": true, "fields": fields}));
             } else {
@@ -77,7 +77,7 @@ fn main() {
             }
         }
         "--help" | "-h" => print_usage(),
-        "--version" | "-v" => println!("loza-lql {}", env!("CARGO_PKG_VERSION")),
+        "--version" | "-v" => println!("lql {}", env!("CARGO_PKG_VERSION")),
         _ => emit_error(json_output, &format!("unknown command: {}", command)),
     }
 }

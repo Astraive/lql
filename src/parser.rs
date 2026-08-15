@@ -72,7 +72,7 @@ impl Parser {
                     self.advance();
                     Order::Desc
                 } else {
-                    Order::Desc // default
+                    Order::Desc
                 };
                 Ok(Statement::Sort { field, order })
             }
@@ -86,6 +86,10 @@ impl Parser {
                     });
                 }
                 Ok(Statement::Limit(n as usize))
+            }
+            Token::Distinct => {
+                self.advance();
+                Ok(Statement::Distinct(self.parse_expr_list()?))
             }
             Token::Project => {
                 self.advance();
@@ -127,7 +131,9 @@ impl Parser {
                 let interval = self.expect_duration()?;
                 Ok(Statement::Timeseries { interval })
             }
-            _ => Err(self.unexpected("statement keyword (where, summarize, sort, limit, project, extend, top, timeseries)")),
+            _ => Err(self.unexpected(
+                "statement keyword (where, summarize, sort, limit, distinct, project, extend, top, timeseries)",
+            )),
         }
     }
 
@@ -314,45 +320,89 @@ impl Parser {
     }
 
     fn parse_comparison(&mut self) -> Result<Expr, LqlError> {
-        let mut left = self.parse_additive()?;
+        let left = self.parse_additive()?;
 
-        let op = match self.current() {
-            Token::Eq => Some(BinOp::Eq),
-            Token::Neq => Some(BinOp::Neq),
-            Token::Gt => Some(BinOp::Gt),
-            Token::Lt => Some(BinOp::Lt),
-            Token::Gte => Some(BinOp::Gte),
-            Token::Lte => Some(BinOp::Lte),
-            Token::Like => Some(BinOp::Like),
-            Token::NotLike => Some(BinOp::NotLike),
-            Token::Contains => Some(BinOp::Contains),
-            Token::Has => Some(BinOp::Has),
-            Token::StartsWith => Some(BinOp::StartsWith),
-            Token::EndsWith => Some(BinOp::EndsWith),
-            Token::In => {
-                self.advance();
-                self.expect_token(&Token::LParen)?;
-                let values = self.parse_expr_list()?;
-                self.expect_token(&Token::RParen)?;
-                return Ok(Expr::InList {
-                    expr: Box::new(left),
-                    values,
-                });
-            }
-            _ => None,
-        };
-
-        if let Some(op) = op {
+        if self.check(&Token::Not) {
             self.advance();
-            let right = self.parse_additive()?;
-            left = Expr::BinaryOp {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
+            return match self.current() {
+                Token::In => {
+                    self.advance();
+                    self.parse_in_list(left, true)
+                }
+                Token::Between => {
+                    self.advance();
+                    self.parse_between(left, true)
+                }
+                Token::Matches => {
+                    self.advance();
+                    let right = self.parse_additive()?;
+                    Ok(Expr::BinaryOp {
+                        left: Box::new(left),
+                        op: BinOp::NotMatches,
+                        right: Box::new(right),
+                    })
+                }
+                _ => Err(self.unexpected("in, between, or matches after not")),
             };
         }
 
-        Ok(left)
+        match self.current() {
+            Token::Eq => self.parse_binary_comparison(left, BinOp::Eq),
+            Token::Neq => self.parse_binary_comparison(left, BinOp::Neq),
+            Token::Gt => self.parse_binary_comparison(left, BinOp::Gt),
+            Token::Lt => self.parse_binary_comparison(left, BinOp::Lt),
+            Token::Gte => self.parse_binary_comparison(left, BinOp::Gte),
+            Token::Lte => self.parse_binary_comparison(left, BinOp::Lte),
+            Token::Like => self.parse_binary_comparison(left, BinOp::Like),
+            Token::NotLike => self.parse_binary_comparison(left, BinOp::NotLike),
+            Token::Contains => self.parse_binary_comparison(left, BinOp::Contains),
+            Token::Has => self.parse_binary_comparison(left, BinOp::Has),
+            Token::StartsWith => self.parse_binary_comparison(left, BinOp::StartsWith),
+            Token::EndsWith => self.parse_binary_comparison(left, BinOp::EndsWith),
+            Token::Matches => self.parse_binary_comparison(left, BinOp::Matches),
+            Token::Between => {
+                self.advance();
+                self.parse_between(left, false)
+            }
+            Token::In => {
+                self.advance();
+                self.parse_in_list(left, false)
+            }
+            _ => Ok(left),
+        }
+    }
+
+    fn parse_binary_comparison(&mut self, left: Expr, op: BinOp) -> Result<Expr, LqlError> {
+        self.advance();
+        let right = self.parse_additive()?;
+        Ok(Expr::BinaryOp {
+            left: Box::new(left),
+            op,
+            right: Box::new(right),
+        })
+    }
+
+    fn parse_in_list(&mut self, left: Expr, negated: bool) -> Result<Expr, LqlError> {
+        self.expect_token(&Token::LParen)?;
+        let values = self.parse_expr_list()?;
+        self.expect_token(&Token::RParen)?;
+        Ok(Expr::InList {
+            expr: Box::new(left),
+            values,
+            negated,
+        })
+    }
+
+    fn parse_between(&mut self, left: Expr, negated: bool) -> Result<Expr, LqlError> {
+        let low = self.parse_additive()?;
+        self.expect_token(&Token::And)?;
+        let high = self.parse_additive()?;
+        Ok(Expr::Between {
+            expr: Box::new(left),
+            low: Box::new(low),
+            high: Box::new(high),
+            negated,
+        })
     }
 
     fn parse_additive(&mut self) -> Result<Expr, LqlError> {

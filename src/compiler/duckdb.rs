@@ -1,6 +1,6 @@
 use crate::ast::*;
 use crate::error::LqlError;
-use crate::functions::duration_to_duckdb_interval;
+use crate::functions::{duration_to_duckdb_interval, validate_function_arity};
 use crate::schema::Schema;
 
 /// Compile a parsed LQL pipeline into DuckDB SQL.
@@ -35,6 +35,13 @@ pub fn compile(pipeline: &Pipeline, schema: &Schema) -> Result<String, LqlError>
             }
             Statement::Limit(n) => {
                 ctx.limit = Some(*n);
+            }
+            Statement::Distinct(fields) => {
+                ctx.distinct = true;
+                ctx.select_cols = fields
+                    .iter()
+                    .map(|e| compile_expr(e, schema))
+                    .collect::<Result<Vec<_>, _>>()?;
             }
             Statement::Project(fields) => {
                 ctx.select_cols = fields
@@ -72,10 +79,15 @@ pub fn compile(pipeline: &Pipeline, schema: &Schema) -> Result<String, LqlError>
     }
 
     // Build SELECT
+    let distinct = if ctx.distinct { " DISTINCT" } else { "" };
     if ctx.select_cols.is_empty() {
-        sql.push_str("SELECT *");
+        sql.push_str(&format!("SELECT{} *", distinct));
     } else {
-        sql.push_str(&format!("SELECT {}", ctx.select_cols.join(", ")));
+        sql.push_str(&format!(
+            "SELECT{} {}",
+            distinct,
+            ctx.select_cols.join(", ")
+        ));
     }
 
     // FROM
@@ -111,6 +123,7 @@ struct CompileCtx {
     group_by: Vec<String>,
     order_by: Option<String>,
     limit: Option<usize>,
+    distinct: bool,
     extended_columns: Vec<String>,
 }
 
@@ -123,6 +136,7 @@ impl CompileCtx {
             group_by: Vec::new(),
             order_by: None,
             limit: None,
+            distinct: false,
             extended_columns: Vec::new(),
         }
     }
@@ -189,7 +203,25 @@ fn compile_expr_with_aliases(
                     l,
                     escape_like_pattern(&strip_quotes(&r))
                 )),
+                BinOp::Matches => Ok(format!("regexp_matches({}, {})", l, r)),
+                BinOp::NotMatches => Ok(format!("NOT regexp_matches({}, {})", l, r)),
                 _ => Ok(format!("{} {} {}", l, op, r)),
+            }
+        }
+        Expr::Between {
+            expr,
+            low,
+            high,
+            negated,
+        } => {
+            let value = compile_expr_with_aliases(expr, schema, aliases)?;
+            let low = compile_expr_with_aliases(low, schema, aliases)?;
+            let high = compile_expr_with_aliases(high, schema, aliases)?;
+            let condition = format!("{} >= {} AND {} <= {}", value, low, value, high);
+            if *negated {
+                Ok(format!("NOT ({})", condition))
+            } else {
+                Ok(condition)
             }
         }
         Expr::UnaryOp { op, expr } => {
@@ -200,13 +232,22 @@ fn compile_expr_with_aliases(
             }
         }
         Expr::Function { name, args } => compile_function(name, args, schema),
-        Expr::InList { expr, values } => {
+        Expr::InList {
+            expr,
+            values,
+            negated,
+        } => {
             let col = compile_expr_with_aliases(expr, schema, aliases)?;
             let vals: Vec<String> = values
                 .iter()
                 .map(|v| compile_expr_with_aliases(v, schema, aliases))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(format!("{} IN ({})", col, vals.join(", ")))
+            Ok(format!(
+                "{} {}IN ({})",
+                col,
+                if *negated { "NOT " } else { "" },
+                vals.join(", ")
+            ))
         }
         Expr::Wildcard => Ok("*".to_string()),
     }
@@ -283,6 +324,7 @@ fn compile_agg(agg: &AggExpr, schema: &Schema) -> Result<String, LqlError> {
 }
 
 fn compile_function(name: &str, args: &[Expr], schema: &Schema) -> Result<String, LqlError> {
+    validate_function_arity(name, args)?;
     let compiled_args: Vec<String> = args
         .iter()
         .map(|a| compile_expr(a, schema))
@@ -300,14 +342,15 @@ fn compile_function(name: &str, args: &[Expr], schema: &Schema) -> Result<String
             }
         }
         "bin" => {
-            if compiled_args.len() == 2 {
+            if let [Expr::Column(_), Expr::Literal(Literal::Duration(d))] = args {
                 Ok(format!(
-                    "date_trunc({}, {})",
-                    compiled_args[1], compiled_args[0]
+                    "time_bucket({}, {})",
+                    duration_to_duckdb_interval(d),
+                    compiled_args[0]
                 ))
             } else {
                 Err(LqlError::Compile {
-                    message: "bin() requires 2 arguments: bin(field, interval)".to_string(),
+                    message: "bin() requires a field and duration interval".to_string(),
                     span: None,
                 })
             }
@@ -353,6 +396,15 @@ fn compile_function(name: &str, args: &[Expr], schema: &Schema) -> Result<String
             }
         }
         "typeof" => Ok(format!("TYPEOF({})", compiled_args[0])),
+        "replace" => Ok(format!(
+            "REPLACE({}, {}, {})",
+            compiled_args[0], compiled_args[1], compiled_args[2]
+        )),
+        "split" => Ok(format!(
+            "STRING_SPLIT({}, {})",
+            compiled_args[0], compiled_args[1]
+        )),
+        "array_length" => Ok(format!("ARRAY_LENGTH({})", compiled_args[0])),
         "to_string" => Ok(format!("CAST({} AS VARCHAR)", compiled_args[0])),
         "to_int" => Ok(format!("CAST({} AS BIGINT)", compiled_args[0])),
         "to_float" => Ok(format!("CAST({} AS DOUBLE)", compiled_args[0])),

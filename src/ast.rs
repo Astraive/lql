@@ -19,6 +19,7 @@ pub enum Statement {
         order: Order,
     },
     Limit(usize),
+    Distinct(Vec<Expr>),
     Project(Vec<Expr>),
     Extend {
         name: String,
@@ -62,6 +63,13 @@ pub enum Expr {
     InList {
         expr: Box<Expr>,
         values: Vec<Expr>,
+        negated: bool,
+    },
+    Between {
+        expr: Box<Expr>,
+        low: Box<Expr>,
+        high: Box<Expr>,
+        negated: bool,
     },
     Wildcard,
 }
@@ -108,6 +116,8 @@ pub enum BinOp {
     Has,
     StartsWith,
     EndsWith,
+    Matches,
+    NotMatches,
     // Logical
     And,
     Or,
@@ -204,6 +214,8 @@ impl std::fmt::Display for BinOp {
             BinOp::Has => write!(f, "has"),
             BinOp::StartsWith => write!(f, "startswith"),
             BinOp::EndsWith => write!(f, "endswith"),
+            BinOp::Matches => write!(f, "matches"),
+            BinOp::NotMatches => write!(f, "not matches"),
             BinOp::And => write!(f, "AND"),
             BinOp::Or => write!(f, "OR"),
             BinOp::Add => write!(f, "+"),

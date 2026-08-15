@@ -137,3 +137,79 @@ fn nested_field_access() {
     let sql = compile_to_duckdb(r#"from events | where user.id = "u123""#).unwrap();
     assert!(sql.contains("json_extract_string") || sql.contains("user.id"));
 }
+#[test]
+fn take_alias_emits_limit() {
+    let sql = compile_to_duckdb("from events | take 7").unwrap();
+    assert!(sql.contains("LIMIT 7"));
+}
+
+#[test]
+fn distinct_projects_unique_values() {
+    let sql = compile_to_duckdb("from events | distinct service").unwrap();
+    assert!(sql.starts_with("SELECT DISTINCT"));
+    assert!(sql.contains("\"service\""));
+}
+
+#[test]
+fn between_is_inclusive_and_clickhouse_parity_exists() {
+    let duckdb = compile_to_duckdb("from events | where duration_ms between 100 and 200").unwrap();
+    assert!(duckdb.contains("\"duration_ms\" >= 100"));
+    assert!(duckdb.contains("\"duration_ms\" <= 200"));
+
+    let clickhouse =
+        compile_to_clickhouse("from events | where duration_ms not between 100 and 200").unwrap();
+    assert!(clickhouse.contains("NOT ("));
+    assert!(clickhouse.contains(">= 100"));
+    assert!(clickhouse.contains("<= 200"));
+}
+
+#[test]
+fn not_in_and_regex_match_compile_for_both_targets() {
+    let duckdb = compile_to_duckdb(
+        r#"from events | where service not in ("api", "web") and message matches "^fail""#,
+    )
+    .unwrap();
+    assert!(duckdb.contains("NOT IN"));
+    assert!(duckdb.contains("regexp_matches"));
+
+    let clickhouse =
+        compile_to_clickhouse(r#"from events | where message not matches "timeout""#).unwrap();
+    assert!(clickhouse.contains("NOT match"));
+}
+
+#[test]
+fn compile_rejects_unknown_fields_before_sql_generation() {
+    let error = compile_to_duckdb(r#"from events | where definitely_missing = "x""#).unwrap_err();
+    assert!(error.to_string().contains("unknown field"));
+}
+
+#[test]
+fn invalid_function_arity_returns_error_instead_of_panicking() {
+    let error = compile_to_duckdb("from events | where isempty()").unwrap_err();
+    assert!(error.to_string().contains("requires"));
+}
+
+#[test]
+fn validate_rejects_invalid_function_arity() {
+    assert!(validate_query("from events | where isempty()").is_err());
+}
+
+#[test]
+fn string_and_array_builtins_compile_for_both_targets() {
+    let duckdb = compile_to_duckdb(
+        r#"from events | project replace(message, "old", "new"), split(service, "/"), array_length(attrs)"#,
+    )
+    .unwrap();
+    assert!(duckdb.contains("REPLACE("));
+    assert!(duckdb.contains("STRING_SPLIT("));
+    assert!(duckdb.contains("ARRAY_LENGTH("));
+
+    let clickhouse =
+        compile_to_clickhouse(r#"from events | project replace(message, "old", "new")"#).unwrap();
+    assert!(clickhouse.contains("replaceAll("));
+
+    let duckdb_bin = compile_to_duckdb("from events | project bin(timestamp, 1h)").unwrap();
+    assert!(duckdb_bin.contains("time_bucket("));
+    let clickhouse_bin = compile_to_clickhouse("from events | project bin(timestamp, 1h)").unwrap();
+    assert!(clickhouse_bin.contains("toStartOfInterval(\"timestamp\", toIntervalHour(1))"));
+}

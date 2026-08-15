@@ -1,4 +1,5 @@
-use crate::ast::{Duration, DurationUnit};
+use crate::ast::{Duration, DurationUnit, Expr};
+use crate::error::LqlError;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Compute the timestamp for `ago(duration)` — current time minus the duration.
@@ -64,6 +65,36 @@ pub fn is_builtin_function(name: &str) -> bool {
             | "log"
             | "sqrt"
     )
+}
+
+/// Validate the argument count for a built-in scalar function.
+pub fn validate_function_arity(name: &str, args: &[Expr]) -> Result<(), LqlError> {
+    let name = name.to_lowercase();
+    let valid = match name.as_str() {
+        "ago" | "strlen" | "tolower" | "toupper" | "trim" | "typeof" | "to_string" | "to_int"
+        | "to_float" | "abs" | "floor" | "ceil" | "log" | "sqrt" | "isempty" | "isnotempty"
+        | "array_length" => args.len() == 1,
+        "now" => args.is_empty(),
+        "coalesce" => !args.is_empty(),
+        "bin" => args.len() == 2,
+        "substring" => args.len() == 3,
+        "split" => args.len() == 2,
+        "replace" => args.len() == 3,
+        "round" => (1..=2).contains(&args.len()),
+        _ => true,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(LqlError::Compile {
+            message: format!(
+                "{}() requires a valid argument count; received {}",
+                name,
+                args.len()
+            ),
+            span: None,
+        })
+    }
 }
 
 #[cfg(test)]

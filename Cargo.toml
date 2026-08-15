@@ -1,5 +1,5 @@
 [package]
-name = "loza-lql"
+name = "lql"
 version = "0.3.0"
 edition = "2021"
 description = "LOZA Query Language compiler for DuckDB and ClickHouse"

@@ -1,4 +1,4 @@
-name: loza-lql
+name: lql
 kind: package
 language: rust
 version: 0.3.0
@@ -16,5 +16,5 @@ publish:
     artifact: lql
   crates:
     owner: astraive
-    package: loza-lql
+    package: lql
     directory: .

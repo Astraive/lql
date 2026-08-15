@@ -4,7 +4,7 @@ LQL is a small, typed-by-validation, Kusto-inspired query language that compiles
 
 ## Current release
 
-- Crate: `loza-lql`
+- Crate: `lql`
 - Version: `0.3.0`
 - Targets: DuckDB and ClickHouse
 - Inputs: pipeline queries beginning with `from`
@@ -20,12 +20,12 @@ cargo run --bin lql -- check 'from events | where duration_ms > 1000'
 Library usage:
 
 ```rust
-use loza_lql::{compile_to_duckdb, compile_to_clickhouse};
+use lql::{compile_to_duckdb, compile_to_clickhouse};
 
 let query = r#"from events | where level = "error" | limit 10"#;
 let duckdb_sql = compile_to_duckdb(query)?;
 let clickhouse_sql = compile_to_clickhouse(query)?;
-# Ok::<(), loza_lql::LqlError>(())
+# Ok::<(), lql::LqlError>(())
 ```
 
 ## Development

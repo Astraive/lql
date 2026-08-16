@@ -416,6 +416,7 @@ fn structured_error(input: &str, error: LqlError) -> DiagnosticBundle {
 // ── WASM bindings ──────────────────────────────────────────────────────────
 #[cfg(target_arch = "wasm32")]
 mod wasm {
+    use super::{ir, AnalysisOptions};
     use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen]

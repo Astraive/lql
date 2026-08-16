@@ -1,0 +1,41 @@
+{
+  "$schema": "lql-live-query-fixtures-v1",
+  "version": "1.0.0",
+  "contract": {
+    "route": "/collectors/{collector}/lql/query",
+    "request": ["query", "parameters", "limit"],
+    "auth": ["bearer", "basic"],
+    "scope_headers": ["X-Loza-Env", "X-Loza-Service"],
+    "max_limit": 1000
+  },
+  "cases": [
+    {
+      "name": "typed scoped query",
+      "query": "from events | where event_id = $id",
+      "parameters": {"id": {"type": "string", "value": "evt-1"}},
+      "limit": 10,
+      "expected_path": "/collectors/demo/lql/query",
+      "expected_row_count": 1
+    },
+    {
+      "name": "diagnostics",
+      "query": "from events | where missing = $id",
+      "parameters": {"id": {"type": "string", "value": "evt-1"}},
+      "limit": 10,
+      "expected_status": 400,
+      "expected_category": "diagnostics"
+    },
+    {
+      "name": "bounded limit",
+      "query": "from events",
+      "parameters": {},
+      "limit": 5000,
+      "expected_limit": 1000
+    },
+    {
+      "name": "redacted credentials",
+      "dsn": "loza://user:secret@example.com/demo",
+      "expected_redactions": ["secret", "Authorization"]
+    }
+  ]
+}

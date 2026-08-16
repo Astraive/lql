@@ -87,6 +87,17 @@ impl Parser {
                 }
                 Ok(Statement::Limit(n as usize))
             }
+            Token::Offset => {
+                self.advance();
+                let n = self.expect_integer()?;
+                if n < 0 {
+                    return Err(LqlError::Compile {
+                        message: "offset must be non-negative".to_string(),
+                        span: None,
+                    });
+                }
+                Ok(Statement::Offset(n as usize))
+            }
             Token::Distinct => {
                 self.advance();
                 Ok(Statement::Distinct(self.parse_expr_list()?))
@@ -221,6 +232,30 @@ impl Parser {
                 let arg = self.parse_expr()?;
                 self.expect_token(&Token::RParen)?;
                 (AggFunction::P99, Some(arg))
+            }
+            Token::Percentile => {
+                self.advance();
+                self.expect_token(&Token::LParen)?;
+                let arg = self.parse_expr()?;
+                self.expect_token(&Token::Comma)?;
+                let percentile = match self.parse_expr()? {
+                    Expr::Literal(Literal::Float(value)) => value,
+                    Expr::Literal(Literal::Integer(value)) => value as f64,
+                    _ => {
+                        return Err(LqlError::Compile {
+                            message: "percentile() requires a numeric percentile".to_string(),
+                            span: None,
+                        })
+                    }
+                };
+                if !(0.0..=100.0).contains(&percentile) {
+                    return Err(LqlError::Compile {
+                        message: "percentile() must be between 0 and 100".to_string(),
+                        span: None,
+                    });
+                }
+                self.expect_token(&Token::RParen)?;
+                (AggFunction::Percentile(percentile), Some(arg))
             }
             Token::DCount => {
                 self.advance();
@@ -738,5 +773,21 @@ mod tests {
         } else {
             panic!("expected parameter comparison");
         }
+    }
+    #[test]
+    fn percentile_aggregate_accepts_named_percentile() {
+        let pipeline =
+            parse("from events | summarize percentile(duration_ms, 99.0) as pctl by service");
+        if let Statement::Summarize { aggregations, .. } = &pipeline.statements[1] {
+            assert_eq!(aggregations[0].function, AggFunction::Percentile(99.0));
+            assert_eq!(aggregations[0].alias.as_deref(), Some("pctl"));
+        } else {
+            panic!("expected Summarize");
+        }
+    }
+    #[test]
+    fn offset_stage_parses() {
+        let pipeline = parse("from events | offset 10 | limit 5");
+        assert!(matches!(&pipeline.statements[1], Statement::Offset(10)));
     }
 }

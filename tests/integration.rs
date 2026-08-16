@@ -134,7 +134,7 @@ fn where_in_list() {
 
 #[test]
 fn nested_field_access_requires_declared_dynamic_root() {
-    assert!(validate_query(r#"from events | where user.id = "u123""#).is_err());
+    assert!(validate_query(r#"from events | where not_declared.id = "u123""#).is_err());
 }
 #[test]
 fn take_alias_emits_limit() {

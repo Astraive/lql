@@ -23,6 +23,7 @@ pub enum Token {
     By,
     Sort,
     Limit,
+    Offset,
     Distinct,
     Project,
     Extend,
@@ -53,6 +54,7 @@ pub enum Token {
     P50,
     P95,
     P99,
+    Percentile,
     DCount,
     First,
     Last,
@@ -129,7 +131,8 @@ impl Lexer {
                     self.pos += 1;
                     let start = self.pos;
                     while self.pos < self.input.len()
-                        && (self.input[self.pos].is_ascii_alphanumeric() || self.input[self.pos] == '_')
+                        && (self.input[self.pos].is_ascii_alphanumeric()
+                            || self.input[self.pos] == '_')
                     {
                         self.pos += 1;
                     }
@@ -410,6 +413,7 @@ impl Lexer {
             "by" => Ok(Token::By),
             "sort" | "order" => Ok(Token::Sort),
             "limit" | "take" => Ok(Token::Limit),
+            "offset" | "skip" => Ok(Token::Offset),
             "distinct" => Ok(Token::Distinct),
             "project" | "select" => Ok(Token::Project),
             "extend" => Ok(Token::Extend),
@@ -423,7 +427,6 @@ impl Lexer {
             "not" => Ok(Token::Not),
             "in" => Ok(Token::In),
             "between" => Ok(Token::Between),
-            "like" => Ok(Token::Like),
             "matches" | "match" => Ok(Token::Matches),
             "contains" | "contain" => Ok(Token::Contains),
             "has" => Ok(Token::Has),
@@ -438,9 +441,9 @@ impl Lexer {
             "p50" | "median" => Ok(Token::P50),
             "p95" => Ok(Token::P95),
             "p99" => Ok(Token::P99),
+            "percentile" | "quantile" => Ok(Token::Percentile),
             "dcount" | "dcountif" => Ok(Token::DCount),
             "first" => Ok(Token::First),
-            "last" => Ok(Token::Last),
             "true" => Ok(Token::BoolLit(true)),
             "false" => Ok(Token::BoolLit(false)),
             "null" | "none" => Ok(Token::NullLit),

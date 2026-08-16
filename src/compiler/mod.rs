@@ -156,6 +156,14 @@ fn render_relation(
                 inner, placeholder
             ))
         }
+        RelationNode::Offset { input, count, .. } => {
+            let inner = render_relation(input, ctx)?;
+            let placeholder = bind(ctx, ValueType::Int, json!(*count));
+            Ok(format!(
+                "SELECT * FROM ({}) AS q OFFSET {}",
+                inner, placeholder
+            ))
+        }
         RelationNode::TimeSeries {
             input, interval, ..
         } => {

@@ -101,6 +101,11 @@ pub enum RelationNode {
         count: usize,
         columns: Vec<TypedColumn>,
     },
+    Offset {
+        input: Box<RelationNode>,
+        count: usize,
+        columns: Vec<TypedColumn>,
+    },
     TimeSeries {
         input: Box<RelationNode>,
         interval: Duration,
@@ -119,6 +124,7 @@ impl RelationNode {
             | Self::Distinct { columns, .. }
             | Self::Sort { columns, .. }
             | Self::Limit { columns, .. }
+            | Self::Offset { columns, .. }
             | Self::TimeSeries { columns, .. } => columns,
         }
     }
@@ -143,9 +149,24 @@ pub struct TypedPipeline {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct QueryPolicy {
     #[serde(default = "default_sources")]
     pub allowed_sources: Vec<String>,
+    #[serde(default)]
+    pub allowed_fields: Vec<String>,
+    #[serde(default)]
+    pub sensitive_fields: Vec<String>,
+    #[serde(default)]
+    pub max_result_rows: Option<usize>,
+    #[serde(default)]
+    pub max_complexity: Option<usize>,
+    #[serde(default)]
+    pub max_time_ms: Option<u64>,
+    #[serde(default)]
+    pub allowed_capabilities: Vec<String>,
+    #[serde(default)]
+    pub max_parameters: Option<usize>,
 }
 fn default_sources() -> Vec<String> {
     vec!["events".to_string()]
@@ -154,7 +175,42 @@ impl Default for QueryPolicy {
     fn default() -> Self {
         Self {
             allowed_sources: default_sources(),
+            allowed_fields: Vec::new(),
+            sensitive_fields: Vec::new(),
+            max_result_rows: None,
+            max_complexity: None,
+            max_time_ms: None,
+            allowed_capabilities: Vec::new(),
+            max_parameters: None,
         }
+    }
+}
+
+impl QueryPolicy {
+    pub fn from_value(value: &serde_json::Value) -> Result<Self, String> {
+        if value.is_null() {
+            return Ok(Self::default());
+        }
+        let policy: Self = serde_json::from_value(value.clone())
+            .map_err(|error| format!("invalid policy: {error}"))?;
+        if policy
+            .allowed_sources
+            .iter()
+            .any(|source| source.trim().is_empty())
+        {
+            return Err("invalid policy: allowed_sources cannot contain empty values".to_string());
+        }
+        for (name, value) in [
+            ("max_result_rows", policy.max_result_rows.map(|v| v as u64)),
+            ("max_complexity", policy.max_complexity.map(|v| v as u64)),
+            ("max_time_ms", policy.max_time_ms),
+            ("max_parameters", policy.max_parameters.map(|v| v as u64)),
+        ] {
+            if value == Some(0) {
+                return Err(format!("invalid policy: {name} must be greater than zero"));
+            }
+        }
+        Ok(policy)
     }
 }
 
@@ -171,7 +227,7 @@ pub struct AnalysisOptions {
 impl AnalysisOptions {
     pub fn duckdb() -> Self {
         Self {
-            schema: Schema::duckdb_default(),
+            schema: Schema::loza_v1(Target::DuckDB),
             target: Target::DuckDB,
             policy: QueryPolicy::default(),
             language_version: "0.1".to_string(),
@@ -180,7 +236,7 @@ impl AnalysisOptions {
     }
     pub fn clickhouse() -> Self {
         Self {
-            schema: Schema::clickhouse_default(),
+            schema: Schema::loza_v1(Target::ClickHouse),
             target: Target::ClickHouse,
             policy: QueryPolicy::default(),
             language_version: "0.1".to_string(),
@@ -196,22 +252,33 @@ pub fn analyze(
     let Some(Statement::From(source)) = pipeline.statements.first() else {
         return Err(DiagnosticBundle::one(Diagnostic::error(
             "LQL100",
-            "query must start with from events",
+            "query must start with a source",
             Some(Span::empty(0)),
         )));
     };
-    if !matches!(source, Source::Events)
-        || !options.policy.allowed_sources.iter().any(|s| s == "events")
+    let source_name = match source {
+        Source::Events => "events",
+        Source::Traces => "traces",
+        Source::Incidents => "incidents",
+        Source::Table(name) => name.as_str(),
+    };
+    if !options
+        .policy
+        .allowed_sources
+        .iter()
+        .any(|allowed| allowed == source_name)
+        || options.schema.source != source_name
     {
         return Err(DiagnosticBundle::one(Diagnostic::error(
             "LQL110",
-            "only the generated events source is available",
+            format!("source '{source_name}' is not declared or allowed"),
             Some(Span::empty(0)),
         )));
     }
     let mut columns = schema_columns(&options.schema);
+    validate_policy_fields(pipeline, &options.policy)?;
     let mut root = RelationNode::Scan {
-        source: "events".to_string(),
+        source: source_name.to_string(),
         columns: columns.clone(),
     };
     for statement in pipeline.statements.iter().skip(1) {
@@ -371,6 +438,11 @@ pub fn analyze(
                 count: *count,
                 columns: columns.clone(),
             },
+            Statement::Offset(count) => RelationNode::Offset {
+                input: Box::new(root),
+                count: *count,
+                columns: columns.clone(),
+            },
             Statement::Timeseries { interval } => {
                 let output = vec![
                     TypedColumn {
@@ -396,12 +468,102 @@ pub fn analyze(
             Statement::From(_) => return Err(type_error("source must be the first stage")),
         };
     }
+    if let Some(max_complexity) = options.policy.max_complexity {
+        if pipeline.statements.len() > max_complexity {
+            return Err(type_error("query complexity exceeds policy limit"));
+        }
+    }
+    if let Some(max_rows) = options.policy.max_result_rows {
+        root = RelationNode::Limit {
+            input: Box::new(root),
+            count: max_rows,
+            columns: columns.clone(),
+        };
+    }
     Ok(TypedPipeline {
         output_schema: columns,
         root,
         language_version: options.language_version.clone(),
         target: options.target,
     })
+}
+fn validate_policy_fields(
+    pipeline: &Pipeline,
+    policy: &QueryPolicy,
+) -> Result<(), DiagnosticBundle> {
+    for statement in &pipeline.statements {
+        let expressions: Vec<&Expr> = match statement {
+            Statement::Where(expr) | Statement::Sort { field: expr, .. } => vec![expr],
+            Statement::Summarize { aggregations, by } => aggregations
+                .iter()
+                .filter_map(|aggregation| aggregation.arg.as_ref())
+                .chain(by.iter())
+                .collect(),
+            Statement::Distinct(exprs) | Statement::Project(exprs) => exprs.iter().collect(),
+            Statement::Extend { expr, .. } => vec![expr],
+            Statement::Top { by, .. } => by.iter().collect(),
+            Statement::From(_)
+            | Statement::Limit(_)
+            | Statement::Offset(_)
+            | Statement::Timeseries { .. } => Vec::new(),
+        };
+        for expression in expressions {
+            validate_policy_expr(expression, policy)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_policy_expr(expression: &Expr, policy: &QueryPolicy) -> Result<(), DiagnosticBundle> {
+    if let Expr::Column(name) = expression {
+        if policy.sensitive_fields.iter().any(|field| field == name) {
+            return Err(DiagnosticBundle::one(Diagnostic::error(
+                "LQL120",
+                format!("field '{name}' is sensitive and unavailable"),
+                Some(Span::empty(0)),
+            )));
+        }
+        if !policy.allowed_fields.is_empty()
+            && !policy
+                .allowed_fields
+                .iter()
+                .any(|field| name == field || name.starts_with(&format!("{field}.")))
+        {
+            return Err(DiagnosticBundle::one(Diagnostic::error(
+                "LQL121",
+                format!("field '{name}' is not allowed by policy"),
+                Some(Span::empty(0)),
+            )));
+        }
+        return Ok(());
+    }
+    match expression {
+        Expr::BinaryOp { left, right, .. } => {
+            validate_policy_expr(left, policy)?;
+            validate_policy_expr(right, policy)?;
+        }
+        Expr::UnaryOp { expr, .. } => validate_policy_expr(expr, policy)?,
+        Expr::Function { args, .. } => {
+            for argument in args {
+                validate_policy_expr(argument, policy)?;
+            }
+        }
+        Expr::InList { expr, values, .. } => {
+            validate_policy_expr(expr, policy)?;
+            for value in values {
+                validate_policy_expr(value, policy)?;
+            }
+        }
+        Expr::Between {
+            expr, low, high, ..
+        } => {
+            validate_policy_expr(expr, policy)?;
+            validate_policy_expr(low, policy)?;
+            validate_policy_expr(high, policy)?;
+        }
+        Expr::Column(_) | Expr::Parameter(_) | Expr::Literal(_) | Expr::Wildcard => {}
+    }
+    Ok(())
 }
 
 fn schema_columns(schema: &Schema) -> Vec<TypedColumn> {
@@ -411,8 +573,8 @@ fn schema_columns(schema: &Schema) -> Vec<TypedColumn> {
         .map(|f| TypedColumn {
             name: f.name.clone(),
             field_type: ValueType::from_field(&f.field_type),
-            nullable: true,
-            origin: "events".to_string(),
+            nullable: schema.nullable(&f.name),
+            origin: schema.source.clone(),
         })
         .collect::<Vec<_>>();
     for (name, ty) in [
@@ -691,5 +853,35 @@ fn aggregate_type(
             Ok((arg.field_type.clone(), true))
         }
         _ => Ok((ValueType::Float, true)),
+    }
+}
+
+#[cfg(test)]
+mod policy_tests {
+    use super::*;
+
+    #[test]
+    fn policy_rejects_sensitive_projection_and_result_limit() {
+        let policy = QueryPolicy::from_value(&serde_json::json!({
+            "allowed_sources": ["events"],
+            "sensitive_fields": ["message"],
+            "max_result_rows": 1
+        }))
+        .expect("policy");
+        let mut options = AnalysisOptions::duckdb();
+        options.policy = policy;
+        let error = crate::analyze_source("from events | project message", &options)
+            .expect_err("sensitive projection must be rejected");
+        assert!(error.to_string().contains("sensitive"));
+    }
+
+    #[test]
+    fn policy_rejects_unknown_fields() {
+        let error = QueryPolicy::from_value(&serde_json::json!({
+            "allowed_sources": ["events"],
+            "not_a_policy_field": true
+        }))
+        .expect_err("unknown policy field must be rejected");
+        assert!(error.contains("unknown field"));
     }
 }

@@ -15,6 +15,7 @@ pub mod schema;
 pub mod validate;
 
 use crate::ast::Literal;
+use std::collections::HashSet;
 
 pub use ast::{AggExpr, Expr, Pipeline, Source, Statement};
 pub use compiler::{BoundValue, CompiledQuery, Target};
@@ -77,12 +78,46 @@ pub fn render_query_with_context(
     parameters: &serde_json::Value,
     scope: &serde_json::Value,
 ) -> Result<CompiledQuery, DiagnosticBundle> {
+    render_query_with_options(
+        input,
+        target,
+        parameters,
+        scope,
+        Schema::loza_v1(target),
+        QueryPolicy::default(),
+    )
+}
+
+pub fn render_query_with_options(
+    input: &str,
+    target: Target,
+    parameters: &serde_json::Value,
+    scope: &serde_json::Value,
+    schema: Schema,
+    policy: QueryPolicy,
+) -> Result<CompiledQuery, DiagnosticBundle> {
     let mut pipeline = parse_diagnostics(input)?;
+    if let Some(max_parameters) = policy.max_parameters {
+        let count = parameters
+            .as_object()
+            .map(|values| values.len())
+            .unwrap_or(0);
+        if count > max_parameters {
+            return Err(DiagnosticBundle::one(Diagnostic::error(
+                "LQL122",
+                "parameter count exceeds policy limit",
+                Some(Span::empty(0)),
+            )));
+        }
+    }
     bind_pipeline(&mut pipeline, parameters)?;
     append_scope_filter(&mut pipeline, scope)?;
-    let options = match target {
-        Target::DuckDB => AnalysisOptions::duckdb(),
-        Target::ClickHouse => AnalysisOptions::clickhouse(),
+    let options = AnalysisOptions {
+        schema,
+        target,
+        policy,
+        language_version: "0.1".to_string(),
+        clock: None,
     };
     let typed = analyze_pipeline(&pipeline, &options)?;
     compiler::render(&typed, target)
@@ -119,6 +154,19 @@ fn bind_pipeline(
     pipeline: &mut Pipeline,
     parameters: &serde_json::Value,
 ) -> Result<(), DiagnosticBundle> {
+    let mut used = HashSet::new();
+    for statement in &pipeline.statements {
+        collect_statement_parameters(statement, &mut used);
+    }
+    if let Some(values) = parameters.as_object() {
+        if let Some(unknown) = values.keys().find(|name| !used.contains(*name)) {
+            return Err(DiagnosticBundle::one(Diagnostic::error(
+                "LQL104",
+                format!("unknown parameter '${unknown}'"),
+                Some(Span::empty(0)),
+            )));
+        }
+    }
     for statement in &mut pipeline.statements {
         match statement {
             Statement::Where(expr) => bind_expr(expr, parameters)?,
@@ -144,10 +192,78 @@ fn bind_pipeline(
                     bind_expr(expr, parameters)?;
                 }
             }
-            Statement::From(_) | Statement::Limit(_) | Statement::Timeseries { .. } => {}
+            Statement::From(_)
+            | Statement::Limit(_)
+            | Statement::Offset(_)
+            | Statement::Timeseries { .. } => {}
         }
     }
     Ok(())
+}
+
+fn collect_statement_parameters(statement: &Statement, used: &mut HashSet<String>) {
+    match statement {
+        Statement::Where(expr) | Statement::Sort { field: expr, .. } => {
+            collect_expr_parameters(expr, used)
+        }
+        Statement::Summarize { aggregations, by } => {
+            for aggregation in aggregations {
+                if let Some(expr) = &aggregation.arg {
+                    collect_expr_parameters(expr, used);
+                }
+            }
+            for expr in by {
+                collect_expr_parameters(expr, used);
+            }
+        }
+        Statement::Distinct(exprs) | Statement::Project(exprs) => {
+            for expr in exprs {
+                collect_expr_parameters(expr, used);
+            }
+        }
+        Statement::Extend { expr, .. } => collect_expr_parameters(expr, used),
+        Statement::Top { by, .. } => {
+            for expr in by {
+                collect_expr_parameters(expr, used);
+            }
+        }
+        Statement::From(_)
+        | Statement::Limit(_)
+        | Statement::Offset(_)
+        | Statement::Timeseries { .. } => {}
+    }
+}
+
+fn collect_expr_parameters(expr: &Expr, used: &mut HashSet<String>) {
+    match expr {
+        Expr::Parameter(name) => {
+            used.insert(name.clone());
+        }
+        Expr::BinaryOp { left, right, .. } => {
+            collect_expr_parameters(left, used);
+            collect_expr_parameters(right, used);
+        }
+        Expr::UnaryOp { expr, .. } => collect_expr_parameters(expr, used),
+        Expr::Function { args, .. } => {
+            for arg in args {
+                collect_expr_parameters(arg, used);
+            }
+        }
+        Expr::InList { expr, values, .. } => {
+            collect_expr_parameters(expr, used);
+            for value in values {
+                collect_expr_parameters(value, used);
+            }
+        }
+        Expr::Between {
+            expr, low, high, ..
+        } => {
+            collect_expr_parameters(expr, used);
+            collect_expr_parameters(low, used);
+            collect_expr_parameters(high, used);
+        }
+        Expr::Column(_) | Expr::Literal(_) | Expr::Wildcard => {}
+    }
 }
 
 fn bind_expr(expr: &mut Expr, parameters: &serde_json::Value) -> Result<(), DiagnosticBundle> {
@@ -172,7 +288,11 @@ fn bind_expr(expr: &mut Expr, parameters: &serde_json::Value) -> Result<(), Diag
                 bind_expr(arg, parameters)?;
             }
         }
-        Expr::InList { expr: value, values, .. } => {
+        Expr::InList {
+            expr: value,
+            values,
+            ..
+        } => {
             bind_expr(value, parameters)?;
             for arg in values {
                 bind_expr(arg, parameters)?;
@@ -193,10 +313,7 @@ fn bind_expr(expr: &mut Expr, parameters: &serde_json::Value) -> Result<(), Diag
     Ok(())
 }
 
-fn parameter_literal(
-    name: &str,
-    value: &serde_json::Value,
-) -> Result<Expr, DiagnosticBundle> {
+fn parameter_literal(name: &str, value: &serde_json::Value) -> Result<Expr, DiagnosticBundle> {
     let typed = value
         .get("type")
         .and_then(serde_json::Value::as_str)
@@ -208,10 +325,12 @@ fn parameter_literal(
         "float" => raw.as_f64().map(Literal::Float),
         "bool" => raw.as_bool().map(Literal::Bool),
         "null" => Some(Literal::Null),
-        "duration" => raw.as_u64().map(|v| Literal::Duration(ast::Duration {
-            value: v,
-            unit: ast::DurationUnit::Milliseconds,
-        })),
+        "duration" => raw.as_u64().map(|v| {
+            Literal::Duration(ast::Duration {
+                value: v,
+                unit: ast::DurationUnit::Milliseconds,
+            })
+        }),
         "dynamic" => Some(Literal::Null),
         _ => None,
     };

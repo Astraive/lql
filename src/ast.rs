@@ -19,6 +19,7 @@ pub enum Statement {
         order: Order,
     },
     Limit(usize),
+    Offset(usize),
     Distinct(Vec<Expr>),
     Project(Vec<Expr>),
     Extend {

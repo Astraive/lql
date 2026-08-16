@@ -11,6 +11,7 @@ pub fn compile(pipeline: &Pipeline, schema: &Schema) -> Result<String, LqlError>
     let mut group_by = Vec::new();
     let mut order_by = None;
     let mut limit = None;
+    let mut offset = None;
     let mut distinct = false;
     let mut extended_columns: Vec<String> = Vec::new();
     for stmt in &pipeline.statements {
@@ -36,6 +37,9 @@ pub fn compile(pipeline: &Pipeline, schema: &Schema) -> Result<String, LqlError>
             }
             Statement::Limit(n) => {
                 limit = Some(*n);
+            }
+            Statement::Offset(n) => {
+                offset = Some(*n);
             }
             Statement::Distinct(fields) => {
                 distinct = true;
@@ -98,6 +102,9 @@ pub fn compile(pipeline: &Pipeline, schema: &Schema) -> Result<String, LqlError>
     }
     if let Some(limit) = limit {
         sql.push_str(&format!(" LIMIT {}", limit));
+    }
+    if let Some(offset) = offset {
+        sql.push_str(&format!(" OFFSET {}", offset));
     }
     Ok(sql)
 }

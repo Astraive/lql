@@ -640,6 +640,8 @@ fn type_expr(expr: &Expr, columns: &[TypedColumn]) -> Result<TypedExpr, Diagnost
         Expr::Literal(lit) => {
             let ty = match lit {
                 Literal::String(_) => ValueType::String,
+                Literal::Timestamp(_) => ValueType::Timestamp,
+                Literal::Dynamic(_) => ValueType::Dynamic,
                 Literal::Integer(_) => ValueType::Int,
                 Literal::Float(_) => ValueType::Float,
                 Literal::Bool(_) => ValueType::Bool,
@@ -687,44 +689,62 @@ fn type_expr(expr: &Expr, columns: &[TypedColumn]) -> Result<TypedExpr, Diagnost
         Expr::BinaryOp { left, op, right } => {
             let l = type_expr(left, columns)?;
             let r = type_expr(right, columns)?;
-            if matches!(
-                op,
+            let result_type = match op {
+                BinOp::Add
+                    if (l.field_type == ValueType::Timestamp
+                        && r.field_type == ValueType::Duration)
+                        || (l.field_type == ValueType::Duration
+                            && r.field_type == ValueType::Timestamp) =>
+                {
+                    ValueType::Timestamp
+                }
+                BinOp::Sub
+                    if l.field_type == ValueType::Timestamp
+                        && r.field_type == ValueType::Duration =>
+                {
+                    ValueType::Timestamp
+                }
+                BinOp::Sub
+                    if l.field_type == ValueType::Timestamp
+                        && r.field_type == ValueType::Timestamp =>
+                {
+                    ValueType::Duration
+                }
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod
-            ) && (!l.field_type.is_numeric() || !r.field_type.is_numeric())
-            {
-                return Err(type_error("arithmetic requires numeric operands"));
-            }
-            let boolean = matches!(
-                op,
-                BinOp::Eq
-                    | BinOp::Neq
-                    | BinOp::Gt
-                    | BinOp::Lt
-                    | BinOp::Gte
-                    | BinOp::Lte
-                    | BinOp::Like
-                    | BinOp::NotLike
-                    | BinOp::Contains
-                    | BinOp::Has
-                    | BinOp::StartsWith
-                    | BinOp::EndsWith
-                    | BinOp::Matches
-                    | BinOp::NotMatches
-                    | BinOp::And
-                    | BinOp::Or
-            );
-            if matches!(op, BinOp::And | BinOp::Or)
-                && (l.field_type != ValueType::Bool || r.field_type != ValueType::Bool)
-            {
-                return Err(type_error("logical operators require bool operands"));
-            }
+                    if l.field_type.is_numeric() && r.field_type.is_numeric() =>
+                {
+                    l.field_type.clone()
+                }
+                BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
+                    return Err(type_error(
+                        "arithmetic requires numeric operands or timestamp-duration operands",
+                    ))
+                }
+                BinOp::And | BinOp::Or
+                    if l.field_type != ValueType::Bool || r.field_type != ValueType::Bool =>
+                {
+                    return Err(type_error("logical operators require bool operands"))
+                }
+                BinOp::And
+                | BinOp::Or
+                | BinOp::Eq
+                | BinOp::Neq
+                | BinOp::Gt
+                | BinOp::Lt
+                | BinOp::Gte
+                | BinOp::Lte
+                | BinOp::Like
+                | BinOp::NotLike
+                | BinOp::Contains
+                | BinOp::Has
+                | BinOp::StartsWith
+                | BinOp::EndsWith
+                | BinOp::Matches
+                | BinOp::NotMatches => ValueType::Bool,
+            };
             Ok(TypedExpr {
                 expr: expr.clone(),
-                field_type: if boolean {
-                    ValueType::Bool
-                } else {
-                    l.field_type
-                },
+                field_type: result_type,
                 nullable: l.nullable || r.nullable,
                 symbol: None,
                 span,

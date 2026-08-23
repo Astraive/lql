@@ -320,7 +320,8 @@ fn parameter_literal(name: &str, value: &serde_json::Value) -> Result<Expr, Diag
         .unwrap_or("");
     let raw = value.get("value").unwrap_or(&serde_json::Value::Null);
     let literal = match typed {
-        "string" | "timestamp" => raw.as_str().map(|v| Literal::String(v.to_string())),
+        "string" => raw.as_str().map(|v| Literal::String(v.to_string())),
+        "timestamp" => raw.as_str().map(|v| Literal::Timestamp(v.to_string())),
         "int" => raw.as_i64().map(Literal::Integer),
         "float" => raw.as_f64().map(Literal::Float),
         "bool" => raw.as_bool().map(Literal::Bool),
@@ -331,7 +332,7 @@ fn parameter_literal(name: &str, value: &serde_json::Value) -> Result<Expr, Diag
                 unit: ast::DurationUnit::Milliseconds,
             })
         }),
-        "dynamic" => Some(Literal::Null),
+        "dynamic" => Some(Literal::Dynamic(raw.clone())),
         _ => None,
     };
     literal.map(Expr::Literal).ok_or_else(|| {
@@ -475,7 +476,7 @@ mod tests {
     #[test]
     fn timeseries_query() {
         let sql = compile_to_duckdb("from events | timeseries 5m").unwrap();
-        assert!(sql.contains("date_trunc"));
+        assert!(sql.contains("time_bucket((5 * INTERVAL '1 minute')"));
         assert!(sql.contains("COUNT(*)"));
     }
 

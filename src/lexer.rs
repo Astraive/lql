@@ -444,6 +444,7 @@ impl Lexer {
             "percentile" | "quantile" => Ok(Token::Percentile),
             "dcount" | "dcountif" => Ok(Token::DCount),
             "first" => Ok(Token::First),
+            "last" => Ok(Token::Last),
             "true" => Ok(Token::BoolLit(true)),
             "false" => Ok(Token::BoolLit(false)),
             "null" | "none" => Ok(Token::NullLit),

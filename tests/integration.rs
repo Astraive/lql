@@ -1,4 +1,7 @@
-use lql::{compile_to_clickhouse, compile_to_duckdb, parse, validate_query};
+use lql::{
+    compile_to_clickhouse, compile_to_duckdb, parse, render_query, render_query_with_parameters,
+    validate_query, Target, ValueType,
+};
 
 #[test]
 fn smoke_from_events_limit() {
@@ -68,7 +71,7 @@ fn project_specific_fields() {
 #[test]
 fn timeseries_5m() {
     let sql = compile_to_duckdb("from events | timeseries 5m").unwrap();
-    assert!(sql.contains("date_trunc"));
+    assert!(sql.contains("time_bucket((5 * INTERVAL '1 minute')"));
     assert!(sql.contains("COUNT(*)"));
     assert!(sql.contains("GROUP BY"));
 }
@@ -89,7 +92,8 @@ fn clickhouse_percentile() {
 #[test]
 fn clickhouse_timeseries() {
     let sql = compile_to_clickhouse("from events | timeseries 1h").unwrap();
-    assert!(sql.contains("toStartOfMinute"));
+    assert!(sql.contains("toStartOfInterval"));
+    assert!(sql.contains("toIntervalHour(1)"));
 }
 
 #[test]
@@ -110,14 +114,16 @@ fn validate_unknown_field() {
 
 #[test]
 fn where_has_string() {
-    let sql = compile_to_duckdb(r#"from events | where message has "timeout""#).unwrap();
-    assert!(sql.contains("LIKE '%timeout%'"));
+    let sql = compile_to_duckdb(r#"from events | where message has "100%_done""#).unwrap();
+    assert!(sql.contains("contains("));
+    assert!(sql.contains("'100%_done'"));
 }
 
 #[test]
 fn where_startswith() {
-    let sql = compile_to_duckdb(r#"from events | where service startswith "check""#).unwrap();
-    assert!(sql.contains("LIKE 'check%'"));
+    let sql = compile_to_duckdb(r#"from events | where service startswith "check_""#).unwrap();
+    assert!(sql.contains("starts_with("));
+    assert!(sql.contains("'check_'"));
 }
 
 #[test]
@@ -169,11 +175,11 @@ fn not_in_and_regex_match_compile_for_both_targets() {
     )
     .unwrap();
     assert!(duckdb.contains("NOT IN"));
-    assert!(duckdb.contains("REGEXP"));
+    assert!(duckdb.contains("regexp_matches("));
 
     let clickhouse =
         compile_to_clickhouse(r#"from events | where message not matches "timeout""#).unwrap();
-    assert!(clickhouse.contains("NOT match"));
+    assert!(clickhouse.contains("NOT match("));
 }
 
 #[test]
@@ -214,6 +220,117 @@ fn string_and_array_builtins_compile_for_both_targets() {
     assert!(duckdb_bin.contains("time_bucket("));
     let clickhouse_bin = compile_to_clickhouse("from events | project bin(timestamp, 1h)").unwrap();
     assert!(clickhouse_bin.contains("toStartOfInterval("));
+}
+
+#[test]
+fn parameter_order_follows_generated_sql_text() {
+    let plan = render_query(
+        "from events | where timestamp >= ago(24h) | summarize p95(duration_ms) by service",
+        Target::DuckDB,
+    )
+    .unwrap();
+    assert!(plan.sql.find("quantile_cont(").unwrap() < plan.sql.find("NOW() -").unwrap());
+    assert_eq!(plan.parameters[0].value, serde_json::json!(0.95));
+    assert_eq!(plan.parameters[1].value, serde_json::json!(24));
+}
+
+#[test]
+fn repeated_positional_expressions_repeat_their_bindings() {
+    let empty = render_query(r#"from events | project isempty("x")"#, Target::DuckDB).unwrap();
+    assert_eq!(empty.sql.matches('?').count(), 2);
+    assert_eq!(empty.parameters.len(), 2);
+    assert_eq!(empty.parameters[0], empty.parameters[1]);
+
+    let between = render_query("from events | where 5 between 1 and 10", Target::DuckDB).unwrap();
+    assert_eq!(between.sql.matches('?').count(), 4);
+    assert_eq!(
+        between
+            .parameters
+            .iter()
+            .map(|parameter| parameter.value.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            serde_json::json!(5),
+            serde_json::json!(1),
+            serde_json::json!(5),
+            serde_json::json!(10)
+        ]
+    );
+}
+
+#[test]
+fn null_comparisons_use_sql_null_predicates() {
+    let equals = render_query("from events | where error = null", Target::DuckDB).unwrap();
+    assert!(equals.sql.contains("IS NULL"));
+    assert!(equals.parameters.is_empty());
+
+    let not_equals = render_query("from events | where null != error", Target::ClickHouse).unwrap();
+    assert!(not_equals.sql.contains("IS NOT NULL"));
+    assert!(not_equals.parameters.is_empty());
+}
+
+#[test]
+fn duration_arithmetic_and_bucketing_use_native_intervals() {
+    let duckdb = compile_to_duckdb(
+        "from events | where timestamp >= now() - 24h | project bin(timestamp, 5m)",
+    )
+    .unwrap();
+    assert!(duckdb.contains("NOW() - (24 * INTERVAL '1 hour')"));
+    assert!(duckdb.contains("time_bucket((5 * INTERVAL '1 minute')"));
+
+    let clickhouse = compile_to_clickhouse(
+        "from events | where timestamp >= ago(24h) | project bin(timestamp, 5m)",
+    )
+    .unwrap();
+    assert!(clickhouse.contains("NOW() - toIntervalHour(24)"));
+    assert!(clickhouse.contains("toStartOfInterval"));
+    assert!(clickhouse.contains("toIntervalMinute(5)"));
+}
+
+#[test]
+fn typed_timestamp_and_dynamic_parameters_are_preserved() {
+    let timestamp = render_query_with_parameters(
+        "from events | where timestamp >= $from",
+        Target::ClickHouse,
+        &serde_json::json!({
+            "from": {"type": "timestamp", "value": "2026-01-01T00:00:00Z"}
+        }),
+    )
+    .unwrap();
+    assert_eq!(timestamp.parameters[0].logical_type, ValueType::Timestamp);
+    assert_eq!(
+        timestamp.parameters[0].value,
+        serde_json::json!("2026-01-01T00:00:00Z")
+    );
+    assert!(timestamp.sql.contains("DateTime64(3)"));
+
+    let dynamic = render_query_with_parameters(
+        "from events | project $payload",
+        Target::DuckDB,
+        &serde_json::json!({
+            "payload": {"type": "dynamic", "value": {"attempt": 2, "ok": true}}
+        }),
+    )
+    .unwrap();
+    assert_eq!(dynamic.parameters[0].logical_type, ValueType::Dynamic);
+    assert_eq!(
+        dynamic.parameters[0].value,
+        serde_json::json!({"attempt": 2, "ok": true})
+    );
+}
+
+#[test]
+fn last_aggregate_is_reachable() {
+    let duckdb = compile_to_duckdb("from events | summarize last(service)").unwrap();
+    assert!(duckdb.contains("LAST_VALUE("));
+}
+
+#[test]
+fn log_has_natural_logarithm_semantics_on_both_targets() {
+    let duckdb = compile_to_duckdb("from events | project log(duration_ms)").unwrap();
+    assert!(duckdb.contains("LN("));
+    let clickhouse = compile_to_clickhouse("from events | project log(duration_ms)").unwrap();
+    assert!(clickhouse.contains("log("));
 }
 
 #[test]

@@ -79,6 +79,8 @@ pub enum Expr {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Literal {
     String(String),
+    Timestamp(String),
+    Dynamic(serde_json::Value),
     Integer(i64),
     Float(f64),
     Bool(bool),

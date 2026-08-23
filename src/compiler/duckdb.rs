@@ -264,7 +264,8 @@ fn compile_expr_with_aliases(
 
 fn compile_literal(lit: &Literal) -> Result<String, LqlError> {
     match lit {
-        Literal::String(s) => Ok(format!("'{}'", s.replace('\'', "''"))),
+        Literal::String(s) | Literal::Timestamp(s) => Ok(format!("'{}'", s.replace('\'', "''"))),
+        Literal::Dynamic(value) => Ok(format!("'{}'", value.to_string().replace('\'', "''"))),
         Literal::Integer(n) => Ok(n.to_string()),
         Literal::Float(n) => Ok(n.to_string()),
         Literal::Bool(b) => Ok(if *b { "TRUE" } else { "FALSE" }.to_string()),

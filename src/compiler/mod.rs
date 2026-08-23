@@ -36,13 +36,14 @@ pub struct CompiledQuery {
 pub fn render(pipeline: &TypedPipeline, target: Target) -> Result<CompiledQuery, DiagnosticBundle> {
     let mut ctx = RenderContext {
         target,
-        parameters: Vec::new(),
+        bindings: Vec::new(),
     };
-    let sql = render_relation(&pipeline.root, &mut ctx)?;
+    let marked_sql = render_relation(&pipeline.root, &mut ctx)?;
+    let (sql, parameters) = finalize_parameters(&marked_sql, &ctx);
     Ok(CompiledQuery {
         target,
         sql,
-        parameters: ctx.parameters,
+        parameters,
         output_schema: pipeline.output_schema.clone(),
         required_capabilities: Vec::new(),
         language_version: pipeline.language_version.clone(),
@@ -51,7 +52,7 @@ pub fn render(pipeline: &TypedPipeline, target: Target) -> Result<CompiledQuery,
 
 struct RenderContext {
     target: Target,
-    parameters: Vec<BoundValue>,
+    bindings: Vec<BoundValue>,
 }
 
 fn render_relation(
@@ -168,13 +169,17 @@ fn render_relation(
             input, interval, ..
         } => {
             let inner = render_relation(input, ctx)?;
+            let duration = render_duration(interval, ctx);
             let bucket = match ctx.target {
-                Target::DuckDB => "date_trunc('minute', q.\"timestamp\")".to_string(),
-                Target::ClickHouse => "toStartOfMinute(q.\"timestamp\")".to_string(),
+                Target::DuckDB => {
+                    format!("time_bucket({}, q.\"timestamp\")", duration)
+                }
+                Target::ClickHouse => {
+                    format!("toStartOfInterval(q.\"timestamp\", {})", duration)
+                }
             };
-            let _ = interval;
             Ok(format!(
-                "SELECT {}, COUNT(*) AS \"count\" FROM ({}) AS q GROUP BY {}",
+                "SELECT {} AS \"timestamp\", COUNT(*) AS \"count\" FROM ({}) AS q GROUP BY {}",
                 bucket, inner, bucket
             ))
         }
@@ -248,36 +253,50 @@ fn render_expr(
             })
         }
         Expr::BinaryOp { left, op, right } => {
+            if matches!(op, BinOp::Eq | BinOp::Neq) && (is_null_expr(left) || is_null_expr(right)) {
+                let value = if is_null_expr(left) { right } else { left };
+                let rendered = render_expr(&typed_child(value), ctx, alias)?;
+                return Ok(format!(
+                    "({} IS {}NULL)",
+                    rendered,
+                    if matches!(op, BinOp::Neq) { "NOT " } else { "" }
+                ));
+            }
             let left_value = render_expr(&typed_child(left), ctx, alias)?;
-            let pattern = match op {
-                BinOp::Contains | BinOp::Has | BinOp::StartsWith | BinOp::EndsWith => {
-                    literal_string(right).map(|s| match op {
-                        BinOp::Contains | BinOp::Has => format!("%{}%", s),
-                        BinOp::StartsWith => format!("{}%", s),
-                        BinOp::EndsWith => format!("%{}", s),
-                        _ => s,
-                    })
+            let right_value = render_expr(&typed_child(right), ctx, alias)?;
+            let rendered = match op {
+                BinOp::Contains | BinOp::Has => match ctx.target {
+                    Target::DuckDB => format!("contains({}, {})", left_value, right_value),
+                    Target::ClickHouse => format!("position({}, {}) > 0", left_value, right_value),
+                },
+                BinOp::StartsWith => match ctx.target {
+                    Target::DuckDB => format!("starts_with({}, {})", left_value, right_value),
+                    Target::ClickHouse => format!("startsWith({}, {})", left_value, right_value),
+                },
+                BinOp::EndsWith => match ctx.target {
+                    Target::DuckDB => format!("ends_with({}, {})", left_value, right_value),
+                    Target::ClickHouse => format!("endsWith({}, {})", left_value, right_value),
+                },
+                BinOp::Matches | BinOp::NotMatches => {
+                    let function = match ctx.target {
+                        Target::DuckDB => "regexp_matches",
+                        Target::ClickHouse => "match",
+                    };
+                    format!(
+                        "{}{}({}, {})",
+                        if matches!(op, BinOp::NotMatches) {
+                            "NOT "
+                        } else {
+                            ""
+                        },
+                        function,
+                        left_value,
+                        right_value
+                    )
                 }
-                _ => None,
+                _ => format!("{} {} {}", left_value, op, right_value),
             };
-            let right_value = if let Some(value) = pattern {
-                bind(ctx, ValueType::String, json!(value))
-            } else {
-                render_expr(&typed_child(right), ctx, alias)?
-            };
-            let operator = match op {
-                BinOp::Contains | BinOp::Has | BinOp::StartsWith | BinOp::EndsWith => "LIKE",
-                BinOp::Matches => match ctx.target {
-                    Target::DuckDB => "REGEXP",
-                    Target::ClickHouse => "match",
-                },
-                BinOp::NotMatches => match ctx.target {
-                    Target::DuckDB => "NOT REGEXP",
-                    Target::ClickHouse => "NOT match",
-                },
-                _ => return Ok(format!("({} {} {})", left_value, op, right_value)),
-            };
-            Ok(format!("({} {} {})", left_value, operator, right_value))
+            Ok(format!("({})", rendered))
         }
         Expr::InList {
             expr: value,
@@ -381,7 +400,10 @@ fn render_expr(
                 "floor" => format!("FLOOR({})", values[0]),
                 "ceil" => format!("CEIL({})", values[0]),
                 "sqrt" => format!("SQRT({})", values[0]),
-                "log" => format!("LOG({})", values[0]),
+                "log" => match ctx.target {
+                    Target::DuckDB => format!("LN({})", values[0]),
+                    Target::ClickHouse => format!("log({})", values[0]),
+                },
                 "coalesce" => format!("COALESCE({})", values.join(", ")),
                 "now" => "NOW()".to_string(),
                 "isempty" => format!("({} IS NULL OR {} = '')", values[0], values[0]),
@@ -411,6 +433,8 @@ fn typed_child(expr: &Expr) -> TypedExpr {
         expr: expr.clone(),
         field_type: match expr {
             Expr::Literal(Literal::String(_)) => ValueType::String,
+            Expr::Literal(Literal::Timestamp(_)) => ValueType::Timestamp,
+            Expr::Literal(Literal::Dynamic(_)) => ValueType::Dynamic,
             Expr::Literal(Literal::Integer(_)) => ValueType::Int,
             Expr::Literal(Literal::Float(_)) => ValueType::Float,
             Expr::Literal(Literal::Bool(_)) => ValueType::Bool,
@@ -423,20 +447,19 @@ fn typed_child(expr: &Expr) -> TypedExpr {
         span: Span::empty(0),
     }
 }
-fn literal_string(expr: &Expr) -> Option<String> {
-    match expr {
-        Expr::Literal(Literal::String(value)) => Some(value.clone()),
-        _ => None,
-    }
-}
 fn render_literal(lit: &Literal, ty: &ValueType, ctx: &mut RenderContext) -> String {
+    if let Literal::Duration(duration) = lit {
+        return render_duration(duration, ctx);
+    }
     let (value, inferred) = match lit {
         Literal::String(s) => (json!(s), ValueType::String),
+        Literal::Timestamp(s) => (json!(s), ValueType::Timestamp),
+        Literal::Dynamic(value) => (value.clone(), ValueType::Dynamic),
         Literal::Integer(n) => (json!(n), ValueType::Int),
         Literal::Float(n) => (json!(n), ValueType::Float),
         Literal::Bool(b) => (json!(b), ValueType::Bool),
         Literal::Null => (Value::Null, ValueType::Unknown),
-        Literal::Duration(d) => (json!(d.to_millis()), ValueType::Duration),
+        Literal::Duration(_) => unreachable!("duration handled above"),
     };
     bind(
         ctx,
@@ -448,21 +471,77 @@ fn render_literal(lit: &Literal, ty: &ValueType, ctx: &mut RenderContext) -> Str
         value,
     )
 }
+
+fn render_duration(duration: &crate::ast::Duration, ctx: &mut RenderContext) -> String {
+    let placeholder = bind(ctx, ValueType::Duration, json!(duration.value));
+    match ctx.target {
+        Target::DuckDB => {
+            let unit = match duration.unit {
+                crate::ast::DurationUnit::Milliseconds => "millisecond",
+                crate::ast::DurationUnit::Seconds => "second",
+                crate::ast::DurationUnit::Minutes => "minute",
+                crate::ast::DurationUnit::Hours => "hour",
+                crate::ast::DurationUnit::Days => "day",
+                crate::ast::DurationUnit::Weeks => "week",
+            };
+            format!("({placeholder} * INTERVAL '1 {unit}')")
+        }
+        Target::ClickHouse => {
+            let function = match duration.unit {
+                crate::ast::DurationUnit::Milliseconds => "toIntervalMillisecond",
+                crate::ast::DurationUnit::Seconds => "toIntervalSecond",
+                crate::ast::DurationUnit::Minutes => "toIntervalMinute",
+                crate::ast::DurationUnit::Hours => "toIntervalHour",
+                crate::ast::DurationUnit::Days => "toIntervalDay",
+                crate::ast::DurationUnit::Weeks => "toIntervalWeek",
+            };
+            format!("{function}({placeholder})")
+        }
+    }
+}
+
 fn bind(ctx: &mut RenderContext, ty: ValueType, value: Value) -> String {
-    let index = ctx.parameters.len();
-    ctx.parameters.push(BoundValue {
-        logical_type: ty.clone(),
+    let index = ctx.bindings.len();
+    ctx.bindings.push(BoundValue {
+        logical_type: ty,
         value,
     });
-    match ctx.target {
-        Target::DuckDB => "?".to_string(),
-        Target::ClickHouse => format!("{{p{}:{}}}", index, clickhouse_type(&ty)),
+    format!("\u{1e}{index}\u{1f}")
+}
+
+fn finalize_parameters(sql: &str, ctx: &RenderContext) -> (String, Vec<BoundValue>) {
+    let mut rendered = String::with_capacity(sql.len());
+    let mut parameters = Vec::new();
+    let mut rest = sql;
+    while let Some(start) = rest.find('\u{1e}') {
+        rendered.push_str(&rest[..start]);
+        let marker = &rest[start + '\u{1e}'.len_utf8()..];
+        let end = marker
+            .find('\u{1f}')
+            .expect("bind markers are created as complete internal pairs");
+        let binding_index = marker[..end]
+            .parse::<usize>()
+            .expect("bind markers contain numeric indexes");
+        let parameter = ctx.bindings[binding_index].clone();
+        let output_index = parameters.len();
+        match ctx.target {
+            Target::DuckDB => rendered.push('?'),
+            Target::ClickHouse => rendered.push_str(&format!(
+                "{{p{}:{}}}",
+                output_index,
+                clickhouse_type(&parameter.logical_type)
+            )),
+        }
+        parameters.push(parameter);
+        rest = &marker[end + '\u{1f}'.len_utf8()..];
     }
+    rendered.push_str(rest);
+    (rendered, parameters)
 }
 fn clickhouse_type(ty: &ValueType) -> &'static str {
     match ty {
         ValueType::Bool => "Bool",
-        ValueType::Int => "Int64",
+        ValueType::Int | ValueType::Duration => "Int64",
         ValueType::Float | ValueType::Decimal => "Float64",
         ValueType::Timestamp => "DateTime64(3)",
         _ => "String",
@@ -503,7 +582,7 @@ pub fn compile(
 
 fn inline_parameters(plan: &CompiledQuery) -> String {
     let mut sql = plan.sql.clone();
-    for parameter in &plan.parameters {
+    for (index, parameter) in plan.parameters.iter().enumerate() {
         let value = match &parameter.value {
             Value::String(s) => format!("'{}'", s.replace('\'', "''")),
             Value::Null => "NULL".to_string(),
@@ -514,10 +593,7 @@ fn inline_parameters(plan: &CompiledQuery) -> String {
             Target::ClickHouse => {
                 let marker = format!(
                     "{{p{}:{}}}",
-                    plan.parameters
-                        .iter()
-                        .position(|p| p == parameter)
-                        .unwrap_or(0),
+                    index,
                     clickhouse_type(&parameter.logical_type)
                 );
                 sql.replace(&marker, &value)
@@ -525,4 +601,8 @@ fn inline_parameters(plan: &CompiledQuery) -> String {
         };
     }
     sql
+}
+
+fn is_null_expr(expr: &Expr) -> bool {
+    matches!(expr, Expr::Literal(Literal::Null))
 }

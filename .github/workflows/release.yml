@@ -90,17 +90,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
       - name: Validate versions and source tree
         shell: bash
         run: |
           set -euo pipefail
           test "$(awk -F '\"' '/^version =/{print $2; exit}' Cargo.toml)" = "$LQL_VERSION"
           test "$(awk -F '\"' '/^version =/{print $2; exit}' clients/rust/Cargo.toml)" = "$LQL_VERSION"
-          test "$(python -c 'import tomllib; print(tomllib.load(open("clients/python/pyproject.toml", "rb"))["project"]["version"])')" = "$LQL_VERSION"
-          test "$(node -p "require('./clients/javascript/package.json').version")" = "$LQL_VERSION"
           cargo fmt --all -- --check
           cargo test --workspace
           cargo build --locked --release --target wasm32-unknown-unknown --lib
@@ -111,28 +106,6 @@ jobs:
           cargo test --locked --manifest-path clients/rust/Cargo.toml
           cargo publish --dry-run --allow-dirty --manifest-path clients/rust/Cargo.toml
           cargo metadata --locked --no-deps --format-version 1 >/dev/null
-      - name: Build and test Python wheel
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade build pytest
-          python -m build clients/python
-          python -m venv "$RUNNER_TEMP/lql-python-venv"
-          "$RUNNER_TEMP/lql-python-venv/bin/python" -m pip install clients/python/dist/*.whl
-          "$RUNNER_TEMP/lql-python-venv/bin/python" -c 'import lql_client'
-          "$RUNNER_TEMP/lql-python-venv/bin/python" -m pytest -q clients/python/tests
-      - name: Build and test JavaScript tarball
-        shell: bash
-        run: |
-          set -euo pipefail
-          npm install --prefix clients/javascript
-          npm run build --prefix clients/javascript
-          package="$(npm pack --silent --prefix clients/javascript --pack-destination "$RUNNER_TEMP")"
-          mkdir -p "$RUNNER_TEMP/lql-js-consumer"
-          npm init --yes --prefix "$RUNNER_TEMP/lql-js-consumer" >/dev/null
-          npm install --prefix "$RUNNER_TEMP/lql-js-consumer" "$RUNNER_TEMP/$package"
-          node --input-type=module -e 'const client = await import("@astraive/lql-client"); if (!client.Client) process.exit(1)'
-          bun test clients/javascript/tests
       - name: Build container and smoke-test compiler handshake
         shell: bash
         run: |
@@ -179,44 +152,6 @@ jobs:
             sleep 10
           done
 
-  publish-python:
-    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish == true }}
-    needs: validate
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Publish Python package
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          python -m pip install --upgrade build twine
-          python -m build clients/python
-          python -m twine upload clients/python/dist/*
-
-  publish-javascript:
-    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish == true }}
-    needs: validate
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: clients/javascript
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          registry-url: https://registry.npmjs.org
-      - name: Publish JavaScript package
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          npm install
-          npm run build
-          npm publish --access public
 
   publish-image:
     if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish == true }}

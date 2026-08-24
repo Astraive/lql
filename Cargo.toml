@@ -1,9 +1,9 @@
 [package]
 name = "lql"
-version = "0.3.0"
+version = "0.4.1"
 edition = "2021"
 description = "LOZA Query Language compiler for DuckDB and ClickHouse"
-license = "MIT"
+exclude = ["target/**", "clients/rust/target/**", "dist/**"]
 repository = "https://github.com/Astraive/lql"
 readme = "README.md"
 
@@ -18,6 +18,9 @@ thiserror = "2"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
 serde-wasm-bindgen = "0.6"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lql-client = { version = "0.4.1", path = "clients/rust" }
 
 [dev-dependencies]
 insta = "1"

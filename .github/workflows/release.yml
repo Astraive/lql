@@ -1,0 +1,209 @@
+name: LQL Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish packages after dry-run validation
+        required: true
+        default: false
+        type: boolean
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+  attestations: write
+
+env:
+  CARGO_TERM_COLOR: always
+  LQL_VERSION: 0.4.1
+
+jobs:
+  binaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            artifact: lql-linux-x64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            artifact: lql-linux-arm64
+          - os: macos-13
+            target: x86_64-apple-darwin
+            artifact: lql-macos-x64
+          - os: macos-14
+            target: aarch64-apple-darwin
+            artifact: lql-macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: lql-windows-x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - name: Build release binary
+        run: cargo build --locked --release --target ${{ matrix.target }} --bin lql
+      - name: Stage binary and checksum
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          ARTIFACT: ${{ matrix.artifact }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          suffix=""
+          if [[ "$TARGET" == *windows* ]]; then suffix=".exe"; fi
+          cp "target/$TARGET/release/lql${suffix}" "dist/${ARTIFACT}${suffix}"
+          python - "$ARTIFACT" "$suffix" <<'PY'
+          import hashlib
+          import pathlib
+          import sys
+          artifact = pathlib.Path("dist") / f"{sys.argv[1]}{sys.argv[2]}"
+          digest = hashlib.sha256(artifact.read_bytes()).hexdigest()
+          (artifact.with_suffix(artifact.suffix + ".sha256")).write_text(f"{digest}  {artifact.name}\n", encoding="utf-8")
+          PY
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+          if-no-files-found: error
+
+  validate:
+    needs: binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+          targets: wasm32-unknown-unknown
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Validate versions and source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(awk -F '\"' '/^version =/{print $2; exit}' Cargo.toml)" = "$LQL_VERSION"
+          test "$(awk -F '\"' '/^version =/{print $2; exit}' clients/rust/Cargo.toml)" = "$LQL_VERSION"
+          test "$(python -c 'import tomllib; print(tomllib.load(open("clients/python/pyproject.toml", "rb"))["project"]["version"])')" = "$LQL_VERSION"
+          test "$(node -p "require('./clients/javascript/package.json').version")" = "$LQL_VERSION"
+          cargo fmt --all -- --check
+          cargo test --workspace
+          cargo build --locked --release --target wasm32-unknown-unknown --lib
+      - name: Dry-run crate publications
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo test --locked --manifest-path clients/rust/Cargo.toml
+          cargo publish --dry-run --allow-dirty --manifest-path clients/rust/Cargo.toml
+          cargo metadata --locked --no-deps --format-version 1 >/dev/null
+      - name: Build and test Python wheel
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade build pytest
+          python -m build clients/python
+          python -m venv "$RUNNER_TEMP/lql-python-venv"
+          "$RUNNER_TEMP/lql-python-venv/bin/python" -m pip install clients/python/dist/*.whl
+          "$RUNNER_TEMP/lql-python-venv/bin/python" -c 'import lql_client'
+          "$RUNNER_TEMP/lql-python-venv/bin/python" -m pytest -q clients/python/tests
+      - name: Build and test JavaScript tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --prefix clients/javascript
+          npm run build --prefix clients/javascript
+          package="$(npm pack --silent --prefix clients/javascript --pack-destination "$RUNNER_TEMP")"
+          mkdir -p "$RUNNER_TEMP/lql-js-consumer"
+          npm init --yes --prefix "$RUNNER_TEMP/lql-js-consumer" >/dev/null
+          npm install --prefix "$RUNNER_TEMP/lql-js-consumer" "$RUNNER_TEMP/$package"
+          node --input-type=module -e 'const client = await import("@astraive/lql-client"); if (!client.Client) process.exit(1)'
+          bun test clients/javascript/tests
+      - name: Build container and smoke-test compiler handshake
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cargo build --locked --release --bin lql
+          cp target/release/lql dist/lql
+          docker build -t ghcr.io/astraive/lql:${LQL_VERSION} .
+          response="$(printf '%s\n' '{"id":1,"method":"handshake","protocol_version":1,"language_version":"0.1","params":{}}' | docker run --rm -i --entrypoint /usr/local/bin/lql ghcr.io/astraive/lql:${LQL_VERSION} serve --stdio)"
+          LQL_HANDSHAKE="$response" python -c 'import json, os; assert json.loads(os.environ["LQL_HANDSHAKE"])["result"]["compiler_version"] == "0.4.1"'
+
+  publish:
+    if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish == true }}
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: https://registry.npmjs.org
+      - name: Publish Rust crates
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CRATES_IO_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo publish --manifest-path clients/rust/Cargo.toml
+          cargo publish
+      - name: Publish Python package
+        if: ${{ hashFiles('clients/python/pyproject.toml') != '' }}
+        env:
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build clients/python
+          python -m twine upload clients/python/dist/*
+      - name: Publish JavaScript package
+        if: ${{ hashFiles('clients/javascript/package.json') != '' }}
+        working-directory: clients/javascript
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          npm install
+          npm run build
+          npm publish --access public
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Publish LQL runtime image
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp "artifacts/lql-linux-x64/lql-linux-x64" dist/lql
+          docker build -t ghcr.io/astraive/lql:${LQL_VERSION} .
+          docker push ghcr.io/astraive/lql:${LQL_VERSION}
+      - name: Publish GitHub release artifacts
+        if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artifacts/**/*.sha256,artifacts/**/*-x64,artifacts/**/*-arm64,artifacts/**/*.exe
+          generate_release_notes: true

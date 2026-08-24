@@ -36,6 +36,9 @@ pub fn compile(pipeline: &Pipeline, schema: &Schema) -> Result<String, LqlError>
             Statement::Limit(n) => {
                 ctx.limit = Some(*n);
             }
+            Statement::Offset(n) => {
+                ctx.offset = Some(*n);
+            }
             Statement::Distinct(fields) => {
                 ctx.distinct = true;
                 ctx.select_cols = fields
@@ -108,9 +111,12 @@ pub fn compile(pipeline: &Pipeline, schema: &Schema) -> Result<String, LqlError>
         sql.push_str(&format!(" ORDER BY {}", order));
     }
 
-    // LIMIT
+    // LIMIT/OFFSET
     if let Some(limit) = ctx.limit {
         sql.push_str(&format!(" LIMIT {}", limit));
+    }
+    if let Some(offset) = ctx.offset {
+        sql.push_str(&format!(" OFFSET {}", offset));
     }
 
     Ok(sql)
@@ -123,6 +129,7 @@ struct CompileCtx {
     group_by: Vec<String>,
     order_by: Option<String>,
     limit: Option<usize>,
+    offset: Option<usize>,
     distinct: bool,
     extended_columns: Vec<String>,
 }
@@ -135,6 +142,7 @@ impl CompileCtx {
             select_cols: Vec::new(),
             group_by: Vec::new(),
             order_by: None,
+            offset: None,
             limit: None,
             distinct: false,
             extended_columns: Vec::new(),
@@ -173,6 +181,7 @@ fn compile_expr_with_aliases(
                 ))
             }
         }
+        Expr::Parameter(_) => Ok("?".to_string()),
         Expr::Literal(lit) => compile_literal(lit),
         Expr::BinaryOp { left, op, right } => {
             let l = compile_expr_with_aliases(left, schema, aliases)?;
@@ -255,7 +264,8 @@ fn compile_expr_with_aliases(
 
 fn compile_literal(lit: &Literal) -> Result<String, LqlError> {
     match lit {
-        Literal::String(s) => Ok(format!("'{}'", s.replace('\'', "''"))),
+        Literal::String(s) | Literal::Timestamp(s) => Ok(format!("'{}'", s.replace('\'', "''"))),
+        Literal::Dynamic(value) => Ok(format!("'{}'", value.to_string().replace('\'', "''"))),
         Literal::Integer(n) => Ok(n.to_string()),
         Literal::Float(n) => Ok(n.to_string()),
         Literal::Bool(b) => Ok(if *b { "TRUE" } else { "FALSE" }.to_string()),
@@ -507,6 +517,12 @@ mod tests {
         let sql = compile_query("from events | sort duration_ms desc | limit 5");
         assert!(sql.contains("ORDER BY"));
         assert!(sql.contains("DESC"));
+        assert!(sql.contains("LIMIT 5"));
+    }
+    #[test]
+    fn offset_compiles() {
+        let sql = compile_query("from events | sort timestamp asc | offset 10 | limit 5");
+        assert!(sql.contains("OFFSET 10"));
         assert!(sql.contains("LIMIT 5"));
     }
 }

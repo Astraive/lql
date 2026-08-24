@@ -19,6 +19,7 @@ pub enum Statement {
         order: Order,
     },
     Limit(usize),
+    Offset(usize),
     Distinct(Vec<Expr>),
     Project(Vec<Expr>),
     Extend {
@@ -46,6 +47,7 @@ pub enum Source {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Expr {
     Column(String),
+    Parameter(String),
     Literal(Literal),
     BinaryOp {
         left: Box<Expr>,
@@ -77,6 +79,8 @@ pub enum Expr {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum Literal {
     String(String),
+    Timestamp(String),
+    Dynamic(serde_json::Value),
     Integer(i64),
     Float(f64),
     Bool(bool),

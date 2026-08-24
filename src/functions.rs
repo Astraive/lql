@@ -36,9 +36,10 @@ pub fn duration_to_clickhouse_interval(d: &Duration) -> String {
 }
 
 /// Known built-in functions and their signatures.
+/// Return whether a function is part of the shared LQL scalar catalog.
 pub fn is_builtin_function(name: &str) -> bool {
     matches!(
-        name.to_lowercase().as_str(),
+        name.to_ascii_lowercase().as_str(),
         "ago"
             | "bin"
             | "now"
@@ -67,19 +68,17 @@ pub fn is_builtin_function(name: &str) -> bool {
     )
 }
 
-/// Validate the argument count for a built-in scalar function.
+/// Validate the argument count for a shared LQL scalar function.
 pub fn validate_function_arity(name: &str, args: &[Expr]) -> Result<(), LqlError> {
-    let name = name.to_lowercase();
+    let name = name.to_ascii_lowercase();
     let valid = match name.as_str() {
         "ago" | "strlen" | "tolower" | "toupper" | "trim" | "typeof" | "to_string" | "to_int"
         | "to_float" | "abs" | "floor" | "ceil" | "log" | "sqrt" | "isempty" | "isnotempty"
         | "array_length" => args.len() == 1,
         "now" => args.is_empty(),
         "coalesce" => !args.is_empty(),
-        "bin" => args.len() == 2,
-        "substring" => args.len() == 3,
-        "split" => args.len() == 2,
-        "replace" => args.len() == 3,
+        "bin" | "split" => args.len() == 2,
+        "if" | "substring" | "replace" => args.len() == 3,
         "round" => (1..=2).contains(&args.len()),
         _ => true,
     };
@@ -124,5 +123,19 @@ mod tests {
         };
         assert_eq!(duration_to_duckdb_interval(&d), "INTERVAL '5' MINUTE");
         assert_eq!(duration_to_clickhouse_interval(&d), "toIntervalMinute(5)");
+    }
+    #[test]
+    fn shared_catalog_covers_if_and_rejects_bad_arity() {
+        assert!(is_builtin_function("IF"));
+        assert!(validate_function_arity("if", &[]).is_err());
+        assert!(validate_function_arity(
+            "if",
+            &[
+                Expr::Literal(crate::ast::Literal::Bool(true)),
+                Expr::Literal(crate::ast::Literal::Integer(1)),
+                Expr::Literal(crate::ast::Literal::Integer(0)),
+            ],
+        )
+        .is_ok());
     }
 }

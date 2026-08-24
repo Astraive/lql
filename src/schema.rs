@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-
+use serde_json::Value;
+use std::collections::{HashMap, HashSet};
 /// Metadata for a single field in the Loza event schema.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldInfo {
@@ -26,10 +26,14 @@ pub enum FieldType {
 /// The full Loza event schema, used for validation and column mapping.
 #[derive(Debug, Clone)]
 pub struct Schema {
+    pub source: String,
     pub table: String,
     pub columns: HashMap<String, FieldInfo>,
     pub raw_column: String,
     pub ts_column: String,
+    nullability: HashMap<String, bool>,
+    sensitivity: HashSet<String>,
+    physical_columns: HashMap<String, (String, String)>,
 }
 
 impl Schema {
@@ -42,6 +46,8 @@ impl Schema {
             ("service", FieldType::String, "Service name"),
             ("version", FieldType::String, "Service version"),
             ("environment", FieldType::String, "Deployment environment"),
+            ("collector", FieldType::String, "Collector scope"),
+            ("attrs", FieldType::Object, "Structured dynamic attributes"),
             ("event", FieldType::String, "Event name"),
             ("kind", FieldType::String, "Event kind (event, log, metric, span)"),
             ("level", FieldType::String, "Log level (debug, info, notice, warn, error, fatal)"),
@@ -87,11 +93,133 @@ impl Schema {
         }
 
         Schema {
+            source: "events".to_string(),
             table: "events".to_string(),
+            nullability: columns.keys().map(|name| (name.clone(), true)).collect(),
+            sensitivity: HashSet::new(),
+            physical_columns: HashMap::new(),
             columns,
             raw_column: "raw".to_string(),
             ts_column: "ts".to_string(),
         }
+    }
+
+    /// Load a versioned schema document for one declared logical source.
+    pub fn from_document(document: &Value, source: &str) -> Result<Self, String> {
+        let version = document
+            .get("schema_version")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "schema_version is required".to_string())?;
+        if version != "v1" {
+            return Err(format!("unsupported schema_version '{version}'"));
+        }
+        let source_document = document
+            .get("sources")
+            .and_then(Value::as_object)
+            .and_then(|sources| sources.get(source))
+            .and_then(Value::as_object)
+            .ok_or_else(|| format!("source '{source}' is not declared"))?;
+        let table = source_document
+            .get("physical")
+            .and_then(Value::as_str)
+            .ok_or_else(|| format!("source '{source}' physical table is required"))?;
+        let fields = source_document
+            .get("fields")
+            .and_then(Value::as_array)
+            .ok_or_else(|| format!("source '{source}' fields are required"))?;
+        let mut columns = HashMap::new();
+        let mut nullability = HashMap::new();
+        let mut sensitivity = HashSet::new();
+        let mut physical_columns = HashMap::new();
+        let mut raw_column = "raw".to_string();
+        for field in fields {
+            let name = field
+                .get("name")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "schema field name is required".to_string())?;
+            if columns.contains_key(name) {
+                return Err(format!("duplicate schema field '{name}'"));
+            }
+            let field_type_name = field
+                .get("field_type")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("schema field '{name}' type is required"))?;
+            let field_type = parse_field_type(field_type_name)?;
+            let physical = field
+                .get("physical")
+                .and_then(Value::as_object)
+                .ok_or_else(|| format!("schema field '{name}' physical mapping is required"))?;
+            let physical_column = physical
+                .get("column")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("schema field '{name}' physical column is required"))?;
+            let storage = physical
+                .get("storage")
+                .and_then(Value::as_str)
+                .ok_or_else(|| format!("schema field '{name}' storage is required"))?;
+            if !matches!(storage, "raw" | "projection") {
+                return Err(format!(
+                    "schema field '{name}' has unsupported storage '{storage}'"
+                ));
+            }
+            if storage == "raw" {
+                raw_column = physical_column.to_string();
+            }
+            let nullable = field
+                .get("nullable")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            let field_sensitivity = field
+                .get("sensitivity")
+                .and_then(Value::as_str)
+                .unwrap_or("public");
+            if field_sensitivity != "public" {
+                sensitivity.insert(name.to_string());
+            }
+            nullability.insert(name.to_string(), nullable);
+            physical_columns.insert(
+                name.to_string(),
+                (physical_column.to_string(), storage.to_string()),
+            );
+            columns.insert(
+                name.to_string(),
+                FieldInfo {
+                    name: name.to_string(),
+                    field_type,
+                    description: field
+                        .get("description")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                    is_nested: field
+                        .get("structured")
+                        .and_then(Value::as_bool)
+                        .unwrap_or(false),
+                },
+            );
+        }
+        Ok(Self {
+            source: source.to_string(),
+            table: table.to_string(),
+            columns,
+            raw_column,
+            ts_column: "ts".to_string(),
+            nullability,
+            sensitivity,
+            physical_columns,
+        })
+    }
+
+    /// Load the bundled revisioned LOZA schema for a target.
+    pub fn loza_v1(target: crate::compiler::Target) -> Self {
+        let document: Value = serde_json::from_str(include_str!("../schemas/loza-v1.json"))
+            .expect("valid bundled LOZA schema");
+        let mut schema =
+            Self::from_document(&document, "events").expect("valid bundled LOZA events schema");
+        if matches!(target, crate::compiler::Target::ClickHouse) {
+            schema.table = "loza_events".to_string();
+        }
+        schema
     }
 
     /// Create the default ClickHouse schema.
@@ -108,27 +236,37 @@ impl Schema {
         self.columns.contains_key(name)
     }
 
+    pub fn nullable(&self, name: &str) -> bool {
+        self.nullability.get(name).copied().unwrap_or(true)
+    }
+
+    pub fn is_sensitive(&self, name: &str) -> bool {
+        self.sensitivity.contains(name)
+    }
+
     /// Get the SQL column name for a field. For DuckDB with raw storage,
     /// nested fields are extracted via json_extract_string.
+    /// Get the SQL column name for a field. For raw storage, extract from JSON.
     pub fn column_expr(&self, field: &str, target: crate::compiler::Target) -> String {
-        if self.columns.contains_key(field) {
-            match target {
-                crate::compiler::Target::DuckDB => {
-                    format!("json_extract_string({}, '$.{}')", self.raw_column, field)
-                }
-                crate::compiler::Target::ClickHouse => {
-                    format!("JSONExtractString(raw, '{}')", field)
-                }
+        if let Some((column, storage)) = self.physical_columns.get(field) {
+            if storage == "projection" {
+                return quote_ident(column);
             }
-        } else {
-            // Nested field like user.id — extract from raw JSON
-            match target {
+            return match target {
                 crate::compiler::Target::DuckDB => {
-                    format!("json_extract_string({}, '$.{}')", self.raw_column, field)
+                    format!("json_extract_string({}, '$.{}')", column, field)
                 }
                 crate::compiler::Target::ClickHouse => {
-                    format!("JSONExtractString(raw, '{}')", field)
+                    format!("JSONExtractString({}, '{}')", column, field)
                 }
+            };
+        }
+        match target {
+            crate::compiler::Target::DuckDB => {
+                format!("json_extract_string({}, '$.{}')", self.raw_column, field)
+            }
+            crate::compiler::Target::ClickHouse => {
+                format!("JSONExtractString({}, '{}')", self.raw_column, field)
             }
         }
     }
@@ -137,6 +275,25 @@ impl Schema {
     pub fn field_names(&self) -> Vec<&str> {
         self.columns.keys().map(|s| s.as_str()).collect()
     }
+}
+
+fn parse_field_type(name: &str) -> Result<FieldType, String> {
+    match name {
+        "string" => Ok(FieldType::String),
+        "int" => Ok(FieldType::Integer),
+        "float" => Ok(FieldType::Float),
+        "bool" => Ok(FieldType::Boolean),
+        "timestamp" => Ok(FieldType::Timestamp),
+        "duration" => Ok(FieldType::Duration),
+        "object" => Ok(FieldType::Object),
+        "array<dynamic>" | "array" => Ok(FieldType::Array),
+        "dynamic" | "any" => Ok(FieldType::Any),
+        other => Err(format!("unsupported schema field type '{other}'")),
+    }
+}
+
+fn quote_ident(value: &str) -> String {
+    format!("\"{}\"", value.replace('"', "\"\""))
 }
 
 #[cfg(test)]
@@ -166,5 +323,43 @@ mod tests {
         let schema = Schema::clickhouse_default();
         let expr = schema.column_expr("service", crate::compiler::Target::ClickHouse);
         assert_eq!(expr, "JSONExtractString(raw, 'service')");
+    }
+}
+
+#[cfg(test)]
+mod revisioned_document_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn revisioned_document_loads_declared_source_and_mapping() {
+        let document = json!({
+            "schema_version": "v1",
+            "sources": {
+                "audit": {
+                    "physical": "audit_rows",
+                    "fields": [{
+                        "name": "message",
+                        "field_type": "string",
+                        "nullable": false,
+                        "sensitivity": "private",
+                        "physical": {
+                            "source": "audit_rows",
+                            "column": "payload",
+                            "storage": "raw"
+                        }
+                    }]
+                }
+            }
+        });
+        let schema = Schema::from_document(&document, "audit").expect("schema document");
+        assert_eq!(schema.source, "audit");
+        assert_eq!(schema.table, "audit_rows");
+        assert_eq!(
+            schema.column_expr("message", crate::compiler::Target::DuckDB),
+            "json_extract_string(payload, '$.message')"
+        );
+        assert!(!schema.nullable("message"));
+        assert!(schema.is_sensitive("message"));
     }
 }

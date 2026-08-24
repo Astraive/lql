@@ -1,0 +1,18 @@
+[package]
+name = "lql-client"
+version = "0.4.1"
+edition = "2021"
+description = "Source-forwarding live LQL client for Loza Collector"
+license = "MIT"
+repository = "https://github.com/Astraive/lql"
+exclude = ["target/**"]
+
+[dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+serde = { version = "1", features = ["derive"] }
+base64 = "0.22"
+url = "2"
+urlencoding = "2"
+serde_json = "1"
+
+[dev-dependencies]

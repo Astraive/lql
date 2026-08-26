@@ -145,7 +145,7 @@ impl Client {
         let api_key = config.api_key.unwrap_or_default();
         let username = config.username.unwrap_or_default();
         let password = config.password.unwrap_or_default();
-        if !username.is_empty() && password.is_empty() && !username.starts_with("lx_pub_") {
+        if !username.is_empty() && password.is_empty() && !username.starts_with("lz_pub_") {
             return Err(config_error("basic username requires a password"));
         }
         if !api_key.is_empty() && !username.is_empty() { /* Bearer precedence is intentional. */ }
@@ -287,7 +287,7 @@ fn parse_dsn(raw: &str) -> Result<DsnParts, QueryError> {
         percent_decode(parsed.username()).map_err(|_| config_error("invalid DSN credentials"))?;
     let password = percent_decode(parsed.password().unwrap_or_default())
         .map_err(|_| config_error("invalid DSN credentials"))?;
-    if !username.is_empty() && password.is_empty() && !username.starts_with("lx_pub_") {
+    if !username.is_empty() && password.is_empty() && !username.starts_with("lz_pub_") {
         return Err(config_error("invalid DSN credentials"));
     }
     Ok(DsnParts {

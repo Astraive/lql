@@ -3,7 +3,7 @@ name = "lql"
 version = "0.5.0"
 edition = "2021"
 description = "LOZA Query Language compiler for DuckDB, ClickHouse, and PostgreSQL"
-exclude = ["target/**", "clients/rust/target/**", "dist/**"]
+license = "MIT"
 repository = "https://github.com/Astraive/lql"
 readme = "README.md"
 

@@ -259,6 +259,9 @@ impl Schema {
                 crate::compiler::Target::ClickHouse => {
                     format!("JSONExtractString({}, '{}')", column, field)
                 }
+                crate::compiler::Target::PostgreSQL => {
+                    format!("({}::jsonb ->> '{}')", column, field.replace('\'', "''"))
+                }
             };
         }
         match target {
@@ -267,6 +270,13 @@ impl Schema {
             }
             crate::compiler::Target::ClickHouse => {
                 format!("JSONExtractString({}, '{}')", self.raw_column, field)
+            }
+            crate::compiler::Target::PostgreSQL => {
+                format!(
+                    "({}::jsonb ->> '{}')",
+                    self.raw_column,
+                    field.replace('\'', "''")
+                )
             }
         }
     }

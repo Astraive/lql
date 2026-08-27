@@ -19,7 +19,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  LQL_VERSION: 0.4.3
+  LQL_VERSION: 0.5.0
 
 jobs:
   binaries:
@@ -115,7 +115,7 @@ jobs:
           cp target/release/lql dist/lql
           docker build -t ghcr.io/astraive/lql:${LQL_VERSION} .
           response="$(printf '%s\n' '{"id":1,"method":"handshake","protocol_version":1,"language_version":"0.1","params":{}}' | docker run --rm -i --entrypoint /usr/local/bin/lql ghcr.io/astraive/lql:${LQL_VERSION} serve --stdio)"
-          LQL_HANDSHAKE="$response" python -c 'import json, os; assert json.loads(os.environ["LQL_HANDSHAKE"])["result"]["compiler_version"] == "0.4.3"'
+          LQL_HANDSHAKE="$response" python -c 'import json, os; assert json.loads(os.environ["LQL_HANDSHAKE"])["result"]["compiler_version"] == "0.5.0"'
 
   publish-cargo:
     if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish == true }}

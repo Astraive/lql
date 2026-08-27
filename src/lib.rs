@@ -59,6 +59,7 @@ pub fn render_query(input: &str, target: Target) -> Result<CompiledQuery, Diagno
     let options = match target {
         Target::DuckDB => AnalysisOptions::duckdb(),
         Target::ClickHouse => AnalysisOptions::clickhouse(),
+        Target::PostgreSQL => AnalysisOptions::postgres(),
     };
     let typed = analyze_source(input, &options)?;
     compiler::render(&typed, target)
@@ -372,6 +373,15 @@ pub fn compile_to_clickhouse(input: &str) -> Result<String, LqlError> {
     let pipeline = parse(input)?;
     compiler::compile(&pipeline, Target::ClickHouse, &Schema::clickhouse_default())
 }
+/// Compile a query using the compatibility SQL-only wrapper.
+pub fn compile_to_postgres(input: &str) -> Result<String, LqlError> {
+    let pipeline = parse(input)?;
+    compiler::compile(
+        &pipeline,
+        Target::PostgreSQL,
+        &Schema::loza_v1(Target::PostgreSQL),
+    )
+}
 
 /// Validate a LQL query against the default generated event schema.
 pub fn validate_query(input: &str) -> Result<(), LqlError> {
@@ -390,6 +400,7 @@ pub fn compile(input: &str, target: Target) -> Result<String, LqlError> {
     match target {
         Target::DuckDB => compile_to_duckdb(input),
         Target::ClickHouse => compile_to_clickhouse(input),
+        Target::PostgreSQL => compile_to_postgres(input),
     }
 }
 

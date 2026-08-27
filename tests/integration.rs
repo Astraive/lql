@@ -1,6 +1,6 @@
 use lql::{
-    compile_to_clickhouse, compile_to_duckdb, parse, render_query, render_query_with_parameters,
-    validate_query, Target, ValueType,
+    compile_to_clickhouse, compile_to_duckdb, compile_to_postgres, parse, render_query,
+    render_query_with_parameters, validate_query, Target, ValueType,
 };
 
 #[test]
@@ -349,4 +349,17 @@ fn semantic_corpus_v01_keeps_target_contracts() {
         let clickhouse = compile_to_clickhouse(source).unwrap();
         assert!(!clickhouse.is_empty(), "ClickHouse corpus case: {source}");
     }
+}
+
+#[test]
+fn postgres_uses_numbered_parameters_and_native_dialect() {
+    let plan = render_query(
+        "from events | where service startswith \"api\" and duration_ms >= 5 | take 2",
+        Target::PostgreSQL,
+    )
+    .unwrap();
+    assert!(plan.sql.contains("$1"));
+    assert!(plan.sql.contains("$2"));
+    let sql = compile_to_postgres("from events | where level = \"error\"").unwrap();
+    assert!(sql.contains("'error'"));
 }

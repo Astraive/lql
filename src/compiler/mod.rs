@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 pub enum Target {
     DuckDB,
     ClickHouse,
+    PostgreSQL,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -177,6 +178,9 @@ fn render_relation(
                 Target::ClickHouse => {
                     format!("toStartOfInterval(q.\"timestamp\", {})", duration)
                 }
+                Target::PostgreSQL => {
+                    format!("date_bin({}, q.\"timestamp\", TIMESTAMP 'epoch')", duration)
+                }
             };
             Ok(format!(
                 "SELECT {} AS \"timestamp\", COUNT(*) AS \"count\" FROM ({}) AS q GROUP BY {}",
@@ -218,6 +222,10 @@ fn render_aggregate(
             match ctx.target {
                 Target::DuckDB => format!("quantile_cont({}, {})", placeholder, value),
                 Target::ClickHouse => format!("quantile({})({})", placeholder, value),
+                Target::PostgreSQL => format!(
+                    "percentile_cont({}) WITHIN GROUP (ORDER BY {})",
+                    placeholder, value
+                ),
             }
         }
         (_, None) => {
@@ -268,32 +276,57 @@ fn render_expr(
                 BinOp::Contains | BinOp::Has => match ctx.target {
                     Target::DuckDB => format!("contains({}, {})", left_value, right_value),
                     Target::ClickHouse => format!("position({}, {}) > 0", left_value, right_value),
+                    Target::PostgreSQL => {
+                        format!("POSITION({} IN {}) > 0", right_value, left_value)
+                    }
                 },
                 BinOp::StartsWith => match ctx.target {
                     Target::DuckDB => format!("starts_with({}, {})", left_value, right_value),
                     Target::ClickHouse => format!("startsWith({}, {})", left_value, right_value),
+                    Target::PostgreSQL => format!("{} LIKE ({} || '%')", left_value, right_value),
                 },
                 BinOp::EndsWith => match ctx.target {
                     Target::DuckDB => format!("ends_with({}, {})", left_value, right_value),
                     Target::ClickHouse => format!("endsWith({}, {})", left_value, right_value),
+                    Target::PostgreSQL => format!("{} LIKE ('%' || {})", left_value, right_value),
                 },
-                BinOp::Matches | BinOp::NotMatches => {
-                    let function = match ctx.target {
-                        Target::DuckDB => "regexp_matches",
-                        Target::ClickHouse => "match",
-                    };
-                    format!(
-                        "{}{}({}, {})",
+                BinOp::Matches | BinOp::NotMatches => match ctx.target {
+                    Target::DuckDB => format!(
+                        "{}regexp_matches({}, {})",
                         if matches!(op, BinOp::NotMatches) {
                             "NOT "
                         } else {
                             ""
                         },
-                        function,
                         left_value,
                         right_value
-                    )
-                }
+                    ),
+                    Target::ClickHouse => format!(
+                        "{}match({}, {})",
+                        if matches!(op, BinOp::NotMatches) {
+                            "NOT "
+                        } else {
+                            ""
+                        },
+                        left_value,
+                        right_value
+                    ),
+                    Target::PostgreSQL => format!(
+                        "{}({} {} {})",
+                        if matches!(op, BinOp::NotMatches) {
+                            "NOT "
+                        } else {
+                            ""
+                        },
+                        left_value,
+                        if matches!(op, BinOp::NotMatches) {
+                            "!~"
+                        } else {
+                            "~"
+                        },
+                        right_value
+                    ),
+                },
                 _ => format!("{} {} {}", left_value, op, right_value),
             };
             Ok(format!("({})", rendered))
@@ -370,10 +403,14 @@ fn render_expr(
                     Target::ClickHouse => {
                         format!("substring({}, {}, {})", values[0], values[1], values[2])
                     }
+                    Target::PostgreSQL => {
+                        format!("SUBSTRING({}, {}, {})", values[0], values[1], values[2])
+                    }
                 },
                 "typeof" => match ctx.target {
                     Target::DuckDB => format!("TYPEOF({})", values[0]),
                     Target::ClickHouse => format!("toTypeName({})", values[0]),
+                    Target::PostgreSQL => format!("pg_typeof({})", values[0]),
                 },
                 "replace" => match ctx.target {
                     Target::DuckDB => {
@@ -382,18 +419,24 @@ fn render_expr(
                     Target::ClickHouse => {
                         format!("replaceAll({}, {}, {})", values[0], values[1], values[2])
                     }
+                    Target::PostgreSQL => {
+                        format!("REPLACE({}, {}, {})", values[0], values[1], values[2])
+                    }
                 },
                 "to_string" => match ctx.target {
                     Target::DuckDB => format!("CAST({} AS VARCHAR)", values[0]),
                     Target::ClickHouse => format!("toString({})", values[0]),
+                    Target::PostgreSQL => format!("CAST({} AS TEXT)", values[0]),
                 },
                 "to_int" => match ctx.target {
                     Target::DuckDB => format!("CAST({} AS BIGINT)", values[0]),
                     Target::ClickHouse => format!("toInt64({})", values[0]),
+                    Target::PostgreSQL => format!("CAST({} AS BIGINT)", values[0]),
                 },
                 "to_float" => match ctx.target {
                     Target::DuckDB => format!("CAST({} AS DOUBLE)", values[0]),
                     Target::ClickHouse => format!("toFloat64({})", values[0]),
+                    Target::PostgreSQL => format!("CAST({} AS DOUBLE PRECISION)", values[0]),
                 },
                 "abs" => format!("ABS({})", values[0]),
                 "round" => format!("ROUND({})", values.join(", ")),
@@ -403,6 +446,7 @@ fn render_expr(
                 "log" => match ctx.target {
                     Target::DuckDB => format!("LN({})", values[0]),
                     Target::ClickHouse => format!("log({})", values[0]),
+                    Target::PostgreSQL => format!("LN({})", values[0]),
                 },
                 "coalesce" => format!("COALESCE({})", values.join(", ")),
                 "now" => "NOW()".to_string(),
@@ -411,15 +455,20 @@ fn render_expr(
                 "array_length" => match ctx.target {
                     Target::DuckDB => format!("ARRAY_LENGTH({})", values[0]),
                     Target::ClickHouse => format!("length({})", values[0]),
+                    Target::PostgreSQL => format!("CARDINALITY({})", values[0]),
                 },
                 "split" => match ctx.target {
                     Target::DuckDB => format!("STRING_SPLIT({}, {})", values[0], values[1]),
                     Target::ClickHouse => format!("splitByString({}, {})", values[1], values[0]),
+                    Target::PostgreSQL => format!("string_to_array({}, {})", values[0], values[1]),
                 },
                 "bin" => match ctx.target {
                     Target::DuckDB => format!("time_bucket({}, {})", values[1], values[0]),
                     Target::ClickHouse => {
                         format!("toStartOfInterval({}, {})", values[0], values[1])
+                    }
+                    Target::PostgreSQL => {
+                        format!("date_bin({}, {}, TIMESTAMP 'epoch')", values[1], values[0])
                     }
                 },
                 _ => unreachable!("validated function catalog must cover renderer"),
@@ -497,6 +546,17 @@ fn render_duration(duration: &crate::ast::Duration, ctx: &mut RenderContext) -> 
             };
             format!("{function}({placeholder})")
         }
+        Target::PostgreSQL => {
+            let unit = match duration.unit {
+                crate::ast::DurationUnit::Milliseconds => "millisecond",
+                crate::ast::DurationUnit::Seconds => "second",
+                crate::ast::DurationUnit::Minutes => "minute",
+                crate::ast::DurationUnit::Hours => "hour",
+                crate::ast::DurationUnit::Days => "day",
+                crate::ast::DurationUnit::Weeks => "week",
+            };
+            format!("({placeholder} * INTERVAL '1 {unit}')")
+        }
     }
 }
 
@@ -531,6 +591,7 @@ fn finalize_parameters(sql: &str, ctx: &RenderContext) -> (String, Vec<BoundValu
                 output_index,
                 clickhouse_type(&parameter.logical_type)
             )),
+            Target::PostgreSQL => rendered.push_str(&format!("${}", output_index + 1)),
         }
         parameters.push(parameter);
         rest = &marker[end + '\u{1f}'.len_utf8()..];
@@ -598,6 +659,7 @@ fn inline_parameters(plan: &CompiledQuery) -> String {
                 );
                 sql.replace(&marker, &value)
             }
+            Target::PostgreSQL => sql.replacen(&format!("${}", index + 1), &value, 1),
         };
     }
     sql

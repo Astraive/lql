@@ -83,10 +83,10 @@ pub struct ConnectionConfig {
     pub password: Option<String>,
     pub env: Option<String>,
     pub service: Option<String>,
+    pub database_connection: Option<String>,
     pub timeout: Option<Duration>,
     pub max_response_bytes: Option<usize>,
 }
-
 pub struct Client {
     endpoint: String,
     collector: String,
@@ -95,6 +95,7 @@ pub struct Client {
     password: String,
     env: String,
     service: String,
+    database_connection: Option<String>,
     max_response_bytes: usize,
     http: HttpClient,
 }
@@ -169,6 +170,9 @@ impl Client {
             password,
             env: config.env.unwrap_or_default(),
             service: config.service.unwrap_or_default(),
+            database_connection: config
+                .database_connection
+                .filter(|value| !value.trim().is_empty()),
             max_response_bytes: config.max_response_bytes.unwrap_or(8 << 20),
             http,
         })
@@ -189,10 +193,11 @@ impl Client {
             self.endpoint,
             urlencoding(&self.collector)
         );
-        let mut request = self
-            .http
-            .post(url)
-            .json(&json!({ "query": source, "parameters": parameters, "limit": limit }));
+        let mut body = json!({ "query": source, "parameters": parameters, "limit": limit });
+        if let Some(connection) = &self.database_connection {
+            body["connection"] = json!(connection);
+        }
+        let mut request = self.http.post(url).json(&body);
         if !self.api_key.is_empty() {
             request = request.bearer_auth(&self.api_key);
         } else if !self.username.is_empty() {

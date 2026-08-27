@@ -118,6 +118,7 @@ fn connection_config(args: &[String]) -> Result<ConnectionConfig, String> {
     });
     let endpoint = flag_value(args, "--endpoint");
     let collector = flag_value(args, "--collector");
+    let database_connection = flag_value(args, "--database-connection");
     let api_key = flag_value(args, "--api-key")
         .or_else(|| flag_value(args, "--api-key-env").and_then(|name| std::env::var(name).ok()));
     let username = flag_value(args, "--username");
@@ -127,14 +128,15 @@ fn connection_config(args: &[String]) -> Result<ConnectionConfig, String> {
     if flag_value(args, "--password").is_some() {
         return Err("plain --password is not supported; use --password-env".into());
     }
-    if value.is_none() && endpoint.is_none() && std::env::var("LOZA_DSN").is_err() {
+    let dsn = value.or_else(|| std::env::var("LOZA_DSN").ok());
+    if dsn.is_none() && endpoint.is_none() {
         return Err(
             "invalid LQL connection configuration: --dsn, LOZA_DSN, or --endpoint is required"
                 .into(),
         );
     }
     Ok(ConnectionConfig {
-        dsn: value,
+        dsn,
         endpoint,
         collector,
         api_key,
@@ -142,6 +144,7 @@ fn connection_config(args: &[String]) -> Result<ConnectionConfig, String> {
         password,
         env,
         service,
+        database_connection,
         ..Default::default()
     })
 }
@@ -219,6 +222,7 @@ fn run_shell(args: &[String]) {
                 Some(("\\connect", dsn)) => {
                     config = ConnectionConfig {
                         dsn: Some(dsn.trim().to_string()),
+                        database_connection: config.database_connection.clone(),
                         ..Default::default()
                     };
                     match Client::new(config.clone()) {
@@ -229,12 +233,22 @@ fn run_shell(args: &[String]) {
                         Err(error) => eprintln!("{}", error),
                     }
                 }
+                Some(("\\database", name)) => {
+                    config.database_connection = Some(name.trim().to_string());
+                    match Client::new(config.clone()) {
+                        Ok(next) => {
+                            client = next;
+                            println!("database connection selected");
+                        }
+                        Err(error) => eprintln!("{}", error),
+                    }
+                }
                 Some(("\\timing", _)) => {
                     timing = !timing;
                     println!("timing {}", if timing { "on" } else { "off" });
                 }
                 Some(("\\help", _)) => {
-                    println!("\\connect <dsn>  \\fields  \\timing  \\format table|json|csv  \\q")
+                    println!("\\connect <dsn>  \\database <name>  \\fields  \\timing  \\format table|json|csv  \\q")
                 }
                 Some(("\\format", value)) if matches!(value.trim(), "table" | "json" | "csv") => {
                     format = value.trim().to_string()
@@ -377,5 +391,5 @@ fn emit_diagnostics(json_output: bool, bundle: &lql::DiagnosticBundle, source: &
 }
 
 fn print_usage() {
-    println!("Loza Query Language (LQL) compiler and live client\n\nUsage:\n  lql compile [--json] <query>\n  lql compile-ch [--json] <query>\n  lql check [--json] <query>\n  lql query --dsn <loza://...> --query <source> [--param name=value]\n  lql connect [<dsn>]\n  lql shell [<dsn>]\n  lql serve --stdio\n  lql fields [--json]");
+    println!("Loza Query Language (LQL) compiler and live client\n\nUsage:\n  lql compile [--json] <query>\n  lql compile-ch [--json] <query>\n  lql check [--json] <query>\n  lql query --dsn <loza://...> --query <source> [--database-connection NAME] [--param name=value]\n  lql connect [<dsn>] [--database-connection NAME]\n  lql shell [<dsn>] [--database-connection NAME]\n  lql serve --stdio\n  lql fields [--json]");
 }

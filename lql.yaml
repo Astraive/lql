@@ -1,7 +1,7 @@
 name: lql
 kind: package
 language: rust
-version: 0.4.2
+version: 0.5.0
 description: LOZA Query Language compiler and tooling
 license: MIT
 repository: https://github.com/Astraive/lql
@@ -22,16 +22,6 @@ publish:
     packages:
       - lql
       - lql-client
-  pypi:
-    owner: astraive
-    package: lql-client
-  npm:
-    owner: astraive
-    package: "@astraive/lql-client"
-  go:
-    owner: astraive
-    module: github.com/astraive/lql/client/go
-    tag: client/go/v0.4.2
   docker:
     owner: astraive
     images:

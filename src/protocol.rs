@@ -124,6 +124,7 @@ fn compile(id: Value, params: Value) -> RpcResponse {
     let target = match params.target.to_ascii_lowercase().as_str() {
         "duckdb" => Target::DuckDB,
         "clickhouse" => Target::ClickHouse,
+        "postgres" | "postgresql" => Target::PostgreSQL,
         _ => return failure(id, "invalid_target", "unsupported target", None),
     };
     let policy = match QueryPolicy::from_value(&params.policy) {

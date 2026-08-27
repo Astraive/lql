@@ -243,6 +243,15 @@ impl AnalysisOptions {
             clock: None,
         }
     }
+    pub fn postgres() -> Self {
+        Self {
+            schema: Schema::loza_v1(Target::PostgreSQL),
+            target: Target::PostgreSQL,
+            policy: QueryPolicy::default(),
+            language_version: "0.1".to_string(),
+            clock: None,
+        }
+    }
 }
 
 pub fn analyze(

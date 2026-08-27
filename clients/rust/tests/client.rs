@@ -14,6 +14,7 @@ fn query_uses_scoped_route_and_bearer_precedence() {
         let request = String::from_utf8_lossy(&buffer[..size]);
         let request = request.to_ascii_lowercase();
         assert!(request.contains("authorization: bearer api-key"));
+        assert!(request.contains("\"connection\":\"analytics\""));
         assert!(request.contains("x-loza-env: prod"));
         assert!(request.contains("x-loza-service: cli"));
         let response = concat!(
@@ -28,8 +29,9 @@ fn query_uses_scoped_route_and_bearer_precedence() {
         api_key: Some("api-key".into()),
         username: Some("user".into()),
         password: Some("pass".into()),
-        env: Some("prod".into()),
         service: Some("cli".into()),
+        env: Some("prod".into()),
+        database_connection: Some("analytics".into()),
         ..Default::default()
     })
     .unwrap();
@@ -56,4 +58,18 @@ fn invalid_configuration_has_stable_category() {
         Err(error) => error,
     };
     assert_eq!(error.category, ErrorCategory::InvalidConfiguration);
+}
+
+#[test]
+fn rejects_client_database_dsns() {
+    for dsn in ["postgres://user:pass@db/loza", "duckdb:///tmp/loza.db"] {
+        let error = match Client::new(ConnectionConfig {
+            dsn: Some(dsn.into()),
+            ..Default::default()
+        }) {
+            Ok(_) => panic!("database DSN must not be accepted"),
+            Err(error) => error,
+        };
+        assert_eq!(error.category, ErrorCategory::InvalidConfiguration);
+    }
 }

@@ -1,7 +1,7 @@
 name: lql
 kind: package
 language: rust
-version: 0.5.0
+version: 0.5.1
 description: LOZA Query Language compiler and tooling
 license: MIT
 repository: https://github.com/Astraive/lql

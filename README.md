@@ -5,7 +5,7 @@ LQL is a small, typed-by-validation, Kusto-inspired query language that compiles
 ## Current release
 
 - Crate: `lql`
-- Version: `0.5.0`
+- Version: `0.5.1`
 - Targets: DuckDB, ClickHouse, and PostgreSQL
 - Inputs: pipeline queries beginning with `from`
 

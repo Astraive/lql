@@ -121,7 +121,8 @@ jobs:
     if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish == true }}
     needs: validate
     uses: ./.github/workflows/cargo-publish.yml
-
+    secrets:
+      CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
 
   publish-image:
     if: ${{ (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || inputs.publish == true }}

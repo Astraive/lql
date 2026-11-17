@@ -6,21 +6,22 @@ on:
       CRATES_TOKEN:
         required: false
 
-permissions:
-  contents: read
-  id-token: write
+permissions: {}
 jobs:
   publish-client:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     env:
       CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       - name: Authenticate with crates.io via Trusted Publishing
         id: crates-auth
         if: ${{ env.CRATES_TOKEN == '' }}
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1
       - name: Publish lql-client crate
         shell: bash
         run: |
@@ -36,15 +37,18 @@ jobs:
   publish-root:
     needs: publish-client
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
     env:
       CRATES_TOKEN: ${{ secrets.CRATES_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
       - name: Authenticate with crates.io via Trusted Publishing
         id: crates-auth
         if: ${{ env.CRATES_TOKEN == '' }}
-        uses: rust-lang/crates-io-auth-action@v1
+        uses: rust-lang/crates-io-auth-action@3268eb413133e2960fa4ae0e963ca76380c54cd9 # v1
       - name: Publish lql crate after registry propagation
         shell: bash
         env:

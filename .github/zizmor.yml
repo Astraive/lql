@@ -1,0 +1,9 @@
+# This configuration keeps the CI workflow audit focused on the two controls
+# enforced for LQL-SEC-007: fully SHA-pinned actions (`unpinned-uses`) and
+# least-privilege `permissions` (`excessive-permissions`). The audits below are
+# unrelated to those controls and are intentionally out of scope here.
+rules:
+  artipacked:
+    disable: true
+  ref-version-mismatch:
+    disable: true

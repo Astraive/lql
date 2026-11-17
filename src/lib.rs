@@ -27,15 +27,35 @@ pub use ir::{
 };
 pub use schema::Schema;
 
-/// Parse LQL input into an AST pipeline.
+/// Default maximum expression nesting depth (see [`parser::DEFAULT_MAX_DEPTH`]).
+pub use parser::DEFAULT_MAX_DEPTH;
+
+/// Parse LQL input into an AST pipeline using the default expression nesting
+/// budget of [`DEFAULT_MAX_DEPTH`].
 pub fn parse(input: &str) -> Result<Pipeline, LqlError> {
-    let tokens = lexer::Lexer::new(input).tokenize()?;
-    parser::Parser::new(tokens).parse()
+    parse_with_max_depth(input, DEFAULT_MAX_DEPTH)
 }
 
-/// Parse and return structured diagnostics with source-relative byte spans.
+/// Parse LQL input into an AST pipeline with an explicit expression nesting
+/// budget. Exceeding `max_depth` returns [`LqlError::RecursionLimitExceeded`]
+/// instead of overflowing the stack.
+pub fn parse_with_max_depth(input: &str, max_depth: usize) -> Result<Pipeline, LqlError> {
+    let tokens = lexer::Lexer::new(input).tokenize()?;
+    parser::Parser::with_max_depth(tokens, max_depth).parse()
+}
+
+/// Parse and return structured diagnostics with source-relative byte spans,
+/// using the default expression nesting budget.
 pub fn parse_diagnostics(input: &str) -> Result<Pipeline, DiagnosticBundle> {
-    parse(input).map_err(|error| structured_error(input, error))
+    parse_diagnostics_with_max_depth(input, DEFAULT_MAX_DEPTH)
+}
+
+/// Parse into structured diagnostics with an explicit expression nesting budget.
+pub fn parse_diagnostics_with_max_depth(
+    input: &str,
+    max_depth: usize,
+) -> Result<Pipeline, DiagnosticBundle> {
+    parse_with_max_depth(input, max_depth).map_err(|error| structured_error(input, error))
 }
 
 /// Analyze an AST against explicit schema, target and policy options.

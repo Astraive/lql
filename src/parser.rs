@@ -2,14 +2,39 @@ use crate::ast::*;
 use crate::error::LqlError;
 use crate::lexer::Token;
 
+/// Default maximum nesting depth for expressions (parentheses and function calls).
+///
+/// Each nested expression descends through roughly nine parser frames, so a
+/// conservative limit keeps the parser well within the thread stack while still
+/// allowing realistic queries. Use [`Parser::with_max_depth`] to override it.
+pub const DEFAULT_MAX_DEPTH: usize = 128;
+
 pub struct Parser {
     tokens: Vec<Token>,
     pos: usize,
+    /// Current expression nesting depth.
+    depth: usize,
+    /// Maximum allowed expression nesting depth.
+    max_depth: usize,
 }
 
 impl Parser {
     pub fn new(tokens: Vec<Token>) -> Self {
-        Self { tokens, pos: 0 }
+        Self::with_max_depth(tokens, DEFAULT_MAX_DEPTH)
+    }
+
+    /// Create a parser with an explicit expression nesting budget.
+    ///
+    /// A value of `128` ([`DEFAULT_MAX_DEPTH`]) is used by [`Parser::new`].
+    /// Lower values reject deeply nested expressions earlier; higher values
+    /// allow more nesting at the cost of additional stack usage.
+    pub fn with_max_depth(tokens: Vec<Token>, max_depth: usize) -> Self {
+        Self {
+            tokens,
+            pos: 0,
+            depth: 0,
+            max_depth,
+        }
     }
 
     pub fn parse(&mut self) -> Result<Pipeline, LqlError> {
@@ -79,24 +104,12 @@ impl Parser {
             Token::Limit => {
                 self.advance();
                 let n = self.expect_integer()?;
-                if n < 0 {
-                    return Err(LqlError::Compile {
-                        message: "limit must be non-negative".to_string(),
-                        span: None,
-                    });
-                }
-                Ok(Statement::Limit(n as usize))
+                Ok(Statement::Limit(Self::checked_count(n, "limit")?))
             }
             Token::Offset => {
                 self.advance();
                 let n = self.expect_integer()?;
-                if n < 0 {
-                    return Err(LqlError::Compile {
-                        message: "offset must be non-negative".to_string(),
-                        span: None,
-                    });
-                }
-                Ok(Statement::Offset(n as usize))
+                Ok(Statement::Offset(Self::checked_count(n, "offset")?))
             }
             Token::Distinct => {
                 self.advance();
@@ -117,13 +130,7 @@ impl Parser {
             Token::Top => {
                 self.advance();
                 let n = self.expect_integer()?;
-                if n < 0 {
-                    return Err(LqlError::Compile {
-                        message: "top count must be non-negative".to_string(),
-                        span: None,
-                    });
-                }
-                let count = n as usize;
+                let count = Self::checked_count(n, "top count")?;
                 let order = if self.check(&Token::Asc) {
                     self.advance();
                     Order::Asc
@@ -493,7 +500,25 @@ impl Parser {
         }
     }
 
+    /// Every expression ultimately funnels through `parse_primary`, so this is
+    /// the single choke point where nesting is counted. Each parenthesized
+    /// expression or function call adds one level before descending back into
+    /// `parse_expr`; exceeding the budget returns a diagnostic instead of
+    /// recursing until the stack is exhausted.
     fn parse_primary(&mut self) -> Result<Expr, LqlError> {
+        self.depth += 1;
+        if self.depth > self.max_depth {
+            self.depth -= 1;
+            return Err(LqlError::RecursionLimitExceeded {
+                max_depth: self.max_depth,
+            });
+        }
+        let result = self.parse_primary_inner();
+        self.depth -= 1;
+        result
+    }
+
+    fn parse_primary_inner(&mut self) -> Result<Expr, LqlError> {
         if self.pos >= self.tokens.len() {
             return Err(LqlError::UnexpectedEof);
         }
@@ -666,6 +691,21 @@ impl Parser {
         }
     }
 
+    /// Convert a parsed `i64` count to `usize` without truncating on 32-bit
+    /// targets. The old `as usize` cast silently wrapped large values there.
+    fn checked_count(value: i64, label: &str) -> Result<usize, LqlError> {
+        if value < 0 {
+            return Err(LqlError::Compile {
+                message: format!("{label} must be non-negative"),
+                span: None,
+            });
+        }
+        usize::try_from(value).map_err(|_| LqlError::Compile {
+            message: format!("{label} is out of range for this platform"),
+            span: None,
+        })
+    }
+
     fn expect_duration(&mut self) -> Result<Duration, LqlError> {
         match self.current().clone() {
             Token::DurationLit(d) => {
@@ -789,5 +829,81 @@ mod tests {
     fn offset_stage_parses() {
         let pipeline = parse("from events | offset 10 | limit 5");
         assert!(matches!(&pipeline.statements[1], Statement::Offset(10)));
+    }
+
+    #[test]
+    fn ten_thousand_nested_parens_return_diagnostic() {
+        let input = format!(
+            "from events | where {}1{}",
+            "(".repeat(10_000),
+            ")".repeat(10_000)
+        );
+        let result = Parser::new(Lexer::new(&input).tokenize().unwrap()).parse();
+        match result {
+            Err(LqlError::RecursionLimitExceeded { max_depth }) => {
+                assert_eq!(max_depth, DEFAULT_MAX_DEPTH)
+            }
+            Ok(_) => panic!("deeply nested parentheses unexpectedly parsed"),
+            Err(other) => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn ten_thousand_nested_function_calls_return_diagnostic() {
+        let input = format!(
+            "from events | where {}x{}",
+            "f(".repeat(10_000),
+            ")".repeat(10_000)
+        );
+        let result = Parser::new(Lexer::new(&input).tokenize().unwrap()).parse();
+        match result {
+            Err(LqlError::RecursionLimitExceeded { max_depth }) => {
+                assert_eq!(max_depth, DEFAULT_MAX_DEPTH)
+            }
+            Ok(_) => panic!("deeply nested function calls unexpectedly parsed"),
+            Err(other) => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn max_depth_is_configurable() {
+        let input = "from events | where (((((1)))))";
+        let tokens = || Lexer::new(input).tokenize().unwrap();
+
+        assert!(matches!(
+            Parser::with_max_depth(tokens(), 3).parse(),
+            Err(LqlError::RecursionLimitExceeded { max_depth: 3 })
+        ));
+        assert!(Parser::with_max_depth(tokens(), 10).parse().is_ok());
+    }
+
+    #[test]
+    fn depth_is_released_between_sibling_expressions() {
+        let terms = (0..100)
+            .map(|n| format!("f({n}) = {n}"))
+            .collect::<Vec<_>>()
+            .join(" and ");
+        let input = format!("from events | where {terms}");
+        assert!(
+            Parser::with_max_depth(Lexer::new(&input).tokenize().unwrap(), 2)
+                .parse()
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn checked_count_rejects_negative_and_overflow() {
+        assert_eq!(Parser::checked_count(0, "limit").unwrap(), 0);
+        assert!(Parser::checked_count(-1, "limit")
+            .unwrap_err()
+            .to_string()
+            .contains("non-negative"));
+
+        let largest = Parser::checked_count(i64::MAX, "limit");
+        if cfg!(target_pointer_width = "64") {
+            assert_eq!(largest.unwrap(), i64::MAX as usize);
+        } else {
+            assert!(largest.is_err());
+        }
     }
 }

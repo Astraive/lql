@@ -161,6 +161,8 @@ pub enum LqlError {
         expected: String,
         pos: usize,
     },
+    #[error("expression nesting depth exceeds the configured limit of {max_depth}")]
+    RecursionLimitExceeded { max_depth: usize },
     #[error("unknown function '{name}'")]
     UnknownFunction { name: String, span: Span },
     #[error("unknown field '{name}'")]
@@ -181,6 +183,7 @@ impl LqlError {
             Self::UnexpectedChar { .. } => "LQL001",
             Self::UnexpectedEof => "LQL002",
             Self::UnexpectedToken { .. } => "LQL003",
+            Self::RecursionLimitExceeded { .. } => "LQL004",
             Self::UnknownFunction { .. } => "LQL101",
             Self::UnknownField { .. } => "LQL102",
             Self::TypeMismatch { .. } => "LQL103",
@@ -195,7 +198,7 @@ impl LqlError {
             Self::UnexpectedChar { pos, .. } | Self::UnexpectedToken { pos, .. } => {
                 Some(Span::new(*pos, pos.saturating_add(1)))
             }
-            Self::UnexpectedEof => None,
+            Self::UnexpectedEof | Self::RecursionLimitExceeded { .. } => None,
             Self::UnknownFunction { span, .. }
             | Self::UnknownField { span, .. }
             | Self::TypeMismatch { span, .. }

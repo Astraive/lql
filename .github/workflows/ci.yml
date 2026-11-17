@@ -4,21 +4,45 @@ on:
   push:
     paths:
       - "**/*.rs"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
       - "Cargo.toml"
       - "Cargo.lock"
       - "lql.yaml"
       - ".gitignore"
       - "scripts/check-no-target-artifacts.sh"
       - ".github/workflows/ci.yml"
+      - "src/**"
+      - "clients/**"
+      - "schemas/**"
+      - "scripts/**"
+      - "benches/**"
+      - "tests/**"
+      - "Dockerfile"
+      - ".github/**"
+      - "**/*.md"
+      - ".gitignore"
   pull_request:
     paths:
       - "**/*.rs"
+      - "**/Cargo.toml"
+      - "**/Cargo.lock"
       - "Cargo.toml"
       - "Cargo.lock"
       - "lql.yaml"
       - ".gitignore"
       - "scripts/check-no-target-artifacts.sh"
       - ".github/workflows/ci.yml"
+      - "src/**"
+      - "clients/**"
+      - "schemas/**"
+      - "scripts/**"
+      - "benches/**"
+      - "tests/**"
+      - "Dockerfile"
+      - ".github/**"
+      - "**/*.md"
+      - ".gitignore"
 
 permissions: {}
 
@@ -51,8 +75,10 @@ jobs:
         run: cargo build --lib --bins --tests
       - name: Test
         run: cargo test --all-features
+      - name: Test client crate
+        run: cargo test --manifest-path clients/rust/Cargo.toml
       - name: Clippy
-        run: cargo clippy --lib --bins --tests --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Format
         run: cargo fmt --all -- --check
 

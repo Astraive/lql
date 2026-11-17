@@ -260,4 +260,44 @@ fn oversized_response_is_rejected_while_streaming() {
     assert_eq!(error.category, ErrorCategory::MalformedResponse);
     assert!(error.message.contains("size limit"));
     server.join().unwrap();
+/// Exercises the versioned live-query fixture and checks the redaction contract:
+/// credentials carried by a DSN must never surface in client error output.
+#[test]
+fn live_query_fixture_redaction_contract() {
+    let fixture: serde_json::Value =
+        serde_json::from_str(include_str!("../../fixtures/live-query-v1.json"))
+            .expect("valid live-query fixture");
+    assert_eq!(fixture["$schema"], "lql-live-query-fixtures-v1");
+    assert_eq!(fixture["version"], "1.0.0");
+    assert_eq!(fixture["contract"]["max_limit"], serde_json::json!(1000));
+
+    let case = fixture["cases"]
+        .as_array()
+        .expect("fixture cases must be an array")
+        .iter()
+        .find(|case| case["name"] == "redacted credentials")
+        .expect("fixture must define the redaction case");
+    let dsn = case["dsn"].as_str().expect("redaction case DSN");
+    let expected = case["expected_redactions"]
+        .as_array()
+        .expect("expected redactions must be an array");
+
+    let client = Client::new(ConnectionConfig {
+        dsn: Some(dsn.to_string()),
+        ..Default::default()
+    })
+    .expect("DSN carrying credentials is a valid configuration");
+
+    // Trigger an error through a public API; no error surface may echo credentials.
+    let error = client
+        .query("", HashMap::new(), 10)
+        .expect_err("an empty source must fail");
+    let rendered = format!("{error:?} {error}");
+    for needle in expected {
+        let needle = needle.as_str().expect("redaction value must be a string");
+        assert!(
+            !rendered.contains(needle),
+            "client error leaked redacted value '{needle}': {rendered}"
+        );
+    }
 }

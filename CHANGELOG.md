@@ -2,9 +2,9 @@
 
 ## [0.5.1] - 2026-08-27
 
-### Fixed
+### Changed
 
-- Add real Collector service-container integration coverage for named targets.
+- Synchronize crate versions and release metadata across compiler, client, and manifests.
 
 ## [0.5.0] - 2026-08-27
 

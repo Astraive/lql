@@ -67,3 +67,28 @@ fn invalid_json_query_returns_structured_diagnostics() {
         .contains("unknown field"));
     assert_eq!(body["diagnostics"][0]["code"], "LQL102");
 }
+
+#[test]
+fn cli_uses_canonical_schema_consistent_with_rpc_and_wasm() {
+    // `host` exists only in the legacy `duckdb_default` schema, so every entry
+    // point must now reject it. CLI `compile` goes through `render_query`.
+    let output = run(&["compile", "--json", r#"from events | where host = "prod""#]);
+    assert!(!output.status.success());
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["ok"], false);
+    assert!(body["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains("unknown field"));
+
+    // `delivery_attempts` exists only in the revisioned LOZA schema and must
+    // be accepted by every entry point.
+    let output = run(&[
+        "compile",
+        "--json",
+        "from events | project delivery_attempts",
+    ]);
+    assert!(output.status.success());
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body["ok"], true);
+}

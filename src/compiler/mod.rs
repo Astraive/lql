@@ -702,6 +702,14 @@ fn inline_parameters(plan: &CompiledQuery) -> String {
     for (index, parameter) in plan.parameters.iter().enumerate() {
         let value = match &parameter.value {
             Value::String(s) => quote_string_literal(s, plan.target),
+/// Render a compiled plan to a single SQL string with bind values inlined.
+/// Shared by the compatibility/wasm compile wrappers so they cannot diverge
+/// from the analyzed, policy-checked plan produced by `render`.
+pub fn inline_parameters(plan: &CompiledQuery) -> String {
+    let mut sql = plan.sql.clone();
+    for (index, parameter) in plan.parameters.iter().enumerate() {
+        let value = match &parameter.value {
+            Value::String(s) => format!("'{}'", s.replace('\'', "''")),
             Value::Null => "NULL".to_string(),
             other => other.to_string(),
         }

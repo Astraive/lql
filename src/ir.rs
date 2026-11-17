@@ -222,7 +222,7 @@ pub struct AnalysisOptions {
 impl AnalysisOptions {
     pub fn duckdb() -> Self {
         Self {
-            schema: Schema::loza_v1(Target::DuckDB),
+            schema: Schema::default_for(Target::DuckDB),
             target: Target::DuckDB,
             policy: QueryPolicy::default(),
             language_version: "0.1".to_string(),
@@ -230,7 +230,7 @@ impl AnalysisOptions {
     }
     pub fn clickhouse() -> Self {
         Self {
-            schema: Schema::loza_v1(Target::ClickHouse),
+            schema: Schema::default_for(Target::ClickHouse),
             target: Target::ClickHouse,
             policy: QueryPolicy::default(),
             language_version: "0.1".to_string(),
@@ -238,7 +238,7 @@ impl AnalysisOptions {
     }
     pub fn postgres() -> Self {
         Self {
-            schema: Schema::loza_v1(Target::PostgreSQL),
+            schema: Schema::default_for(Target::PostgreSQL),
             target: Target::PostgreSQL,
             policy: QueryPolicy::default(),
             language_version: "0.1".to_string(),

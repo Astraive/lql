@@ -248,6 +248,15 @@ impl Schema {
         schema
     }
 
+    /// Canonical default schema for a target.
+    ///
+    /// Every public entry point (WASM, CLI, RPC and the compatibility wrappers)
+    /// must use this single default so query validity does not depend on which
+    /// interface a caller happens to use.
+    pub fn default_for(target: crate::compiler::Target) -> Self {
+        Self::loza_v1(target)
+    }
+
     /// Create the default ClickHouse schema.
     pub fn clickhouse_default() -> Self {
         let mut schema = Self::duckdb_default();

@@ -2,6 +2,8 @@ use lql::{
     compile_to_clickhouse, compile_to_duckdb, compile_to_postgres, compile_with_policy, parse,
     render_query, render_query_with_context, render_query_with_parameters, validate_query,
     QueryPolicy, Schema, Target, ValueType,
+    compile_to_clickhouse, compile_to_duckdb, compile_to_postgres, parse, render_query,
+    render_query_with_context, render_query_with_parameters, validate_query, Target, ValueType,
 };
 
 #[test]
@@ -514,6 +516,94 @@ fn semantic_corpus_v01_keeps_target_contracts() {
         let clickhouse = compile_to_clickhouse(source).unwrap();
         assert!(!clickhouse.is_empty(), "ClickHouse corpus case: {source}");
     }
+}
+
+/// Both scope predicates must be bound as parameters, in order, applied
+/// directly to the source scan (not appended after aggregation/projection).
+fn assert_source_scope(plan: &lql::CompiledQuery) {
+    assert!(
+        plan.sql.contains(
+            r#"FROM "events") AS q WHERE ((q."collector" = ?) AND (q."environment" = ?))"#
+        ),
+        "scope predicate must filter the source scan directly: {}",
+        plan.sql
+    );
+    let values: Vec<_> = plan.parameters.iter().map(|p| p.value.clone()).collect();
+    assert_eq!(
+        &values[..2],
+        &[
+            serde_json::json!("tenant-a"),
+            serde_json::json!("production")
+        ]
+    );
+    assert_eq!(plan.parameters[0].logical_type, ValueType::String);
+    assert_eq!(plan.parameters[1].logical_type, ValueType::String);
+}
+
+#[test]
+fn scoped_summarize_query_filters_at_source() {
+    let plan = render_query_with_context(
+        r#"from events | summarize count(), avg(duration_ms) by service | sort count desc"#,
+        Target::DuckDB,
+        &serde_json::json!({}),
+        &serde_json::json!({"collector": "tenant-a", "environment": "production"}),
+    )
+    .unwrap();
+
+    assert_source_scope(&plan);
+    assert!(plan.sql.contains("GROUP BY"), "{}", plan.sql);
+    assert!(plan.sql.contains("COUNT(*)"), "{}", plan.sql);
+}
+
+#[test]
+fn scoped_project_query_dropping_scope_columns_still_filters_at_source() {
+    // Regression: previously the scope `Where` was appended after `project`, so
+    // `collector`/`environment` no longer existed and analysis failed.
+    let plan = render_query_with_context(
+        r#"from events | project service, duration_ms | sort duration_ms desc"#,
+        Target::DuckDB,
+        &serde_json::json!({}),
+        &serde_json::json!({"collector": "tenant-a", "environment": "production"}),
+    )
+    .unwrap();
+
+    assert_source_scope(&plan);
+    assert!(plan.sql.contains("SELECT q.\"service\""), "{}", plan.sql);
+}
+
+#[test]
+fn scoped_sort_query_filters_at_source() {
+    let plan = render_query_with_context(
+        r#"from events | sort timestamp desc | limit 10"#,
+        Target::DuckDB,
+        &serde_json::json!({}),
+        &serde_json::json!({"collector": "tenant-a", "environment": "production"}),
+    )
+    .unwrap();
+
+    assert_source_scope(&plan);
+    assert!(plan.sql.contains("ORDER BY"), "{}", plan.sql);
+    assert!(plan.sql.contains("LIMIT ?"), "{}", plan.sql);
+}
+
+#[test]
+fn scoped_query_with_single_scope_field_filters_at_source() {
+    let plan = render_query_with_context(
+        r#"from events | summarize count() by service"#,
+        Target::DuckDB,
+        &serde_json::json!({}),
+        &serde_json::json!({"collector": "tenant-a"}),
+    )
+    .unwrap();
+
+    assert!(
+        plan.sql
+            .contains(r#"FROM "events") AS q WHERE (q."collector" = ?)"#),
+        "single scope predicate must filter the source: {}",
+        plan.sql
+    );
+    assert_eq!(plan.parameters.len(), 1);
+    assert_eq!(plan.parameters[0].value, serde_json::json!("tenant-a"));
 }
 
 #[test]

@@ -44,6 +44,21 @@ client never accepts or opens `postgres://`, `duckdb://`, or other direct
 database DSNs. DuckDB is a server-side file path, while PostgreSQL and
 ClickHouse use server-side host/port credentials.
 
+## Security model: trusted scope
+
+Queries that carry a trusted `scope` (via `render_query_with_context` /
+`render_query_with_options`, or the `compile` RPC) have their `collector` and
+`environment` predicates injected as a `where` filter **immediately after the
+source stage** — before any user `where`, `summarize`, `project`, `extend`,
+`distinct`, `sort` or `top`. The scope values are always bound as SQL
+parameters, never inlined into the query text.
+
+Applying the filter at the source means every later stage only ever sees rows
+inside the caller's tenant/environment, and the scoped columns need not survive
+aggregation or projection. Scope enforcement therefore cannot be bypassed by
+reshaping the pipeline, and cannot fail just because a projection drops the
+`collector` or `environment` column.
+
 ## Development
 
 ```bash

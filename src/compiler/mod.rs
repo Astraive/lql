@@ -29,7 +29,6 @@ pub struct CompiledQuery {
     pub sql: String,
     pub parameters: Vec<BoundValue>,
     pub output_schema: Vec<TypedColumn>,
-    pub required_capabilities: Vec<String>,
     pub language_version: String,
 }
 
@@ -46,7 +45,6 @@ pub fn render(pipeline: &TypedPipeline, target: Target) -> Result<CompiledQuery,
         sql,
         parameters,
         output_schema: pipeline.output_schema.clone(),
-        required_capabilities: Vec::new(),
         language_version: pipeline.language_version.clone(),
     })
 }
@@ -487,7 +485,13 @@ fn render_expr(
                         format!("date_bin({}, {}, TIMESTAMP 'epoch')", values[1], values[0])
                     }
                 },
-                _ => unreachable!("validated function catalog must cover renderer"),
+                _ => {
+                    return Err(DiagnosticBundle::one(Diagnostic::error(
+                        "LQL101",
+                        format!("function '{}' cannot be rendered for this target", name),
+                        Some(expr.span),
+                    )));
+                }
             })
         }
     }
@@ -659,7 +663,6 @@ pub fn compile_with_policy(
         target,
         policy,
         language_version: "0.1".to_string(),
-        clock: None,
     };
     let typed =
         crate::ir::analyze(pipeline, &options).map_err(|d| crate::error::LqlError::Compile {

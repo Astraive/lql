@@ -26,7 +26,6 @@ pub fn validate(pipeline: &Pipeline, schema: &Schema) -> Result<(), LqlError> {
         target: crate::compiler::Target::DuckDB,
         policy,
         language_version: "0.1".to_string(),
-        clock: None,
     };
     analyze(pipeline, &options)
         .map(|_| ())

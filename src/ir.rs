@@ -164,8 +164,6 @@ pub struct QueryPolicy {
     #[serde(default)]
     pub max_time_ms: Option<u64>,
     #[serde(default)]
-    pub allowed_capabilities: Vec<String>,
-    #[serde(default)]
     pub max_parameters: Option<usize>,
 }
 fn default_sources() -> Vec<String> {
@@ -180,7 +178,6 @@ impl Default for QueryPolicy {
             max_result_rows: None,
             max_complexity: None,
             max_time_ms: None,
-            allowed_capabilities: Vec::new(),
             max_parameters: None,
         }
     }
@@ -220,8 +217,6 @@ pub struct AnalysisOptions {
     pub target: Target,
     pub policy: QueryPolicy,
     pub language_version: String,
-    /// Optional unix milliseconds used by time-sensitive functions.
-    pub clock: Option<i64>,
 }
 
 impl AnalysisOptions {
@@ -231,7 +226,6 @@ impl AnalysisOptions {
             target: Target::DuckDB,
             policy: QueryPolicy::default(),
             language_version: "0.1".to_string(),
-            clock: None,
         }
     }
     pub fn clickhouse() -> Self {
@@ -240,7 +234,6 @@ impl AnalysisOptions {
             target: Target::ClickHouse,
             policy: QueryPolicy::default(),
             language_version: "0.1".to_string(),
-            clock: None,
         }
     }
     pub fn postgres() -> Self {
@@ -249,7 +242,6 @@ impl AnalysisOptions {
             target: Target::PostgreSQL,
             policy: QueryPolicy::default(),
             language_version: "0.1".to_string(),
-            clock: None,
         }
     }
 }
@@ -804,18 +796,14 @@ fn type_expr(expr: &Expr, columns: &[TypedColumn]) -> Result<TypedExpr, Diagnost
         }
         Expr::Function { name, args } => {
             let lower = name.to_ascii_lowercase();
-            let valid_arity = match lower.as_str() {
-                "now" => args.is_empty(),
-                "ago" | "strlen" | "tolower" | "toupper" | "trim" | "typeof" | "to_string"
-                | "to_int" | "to_float" | "abs" | "floor" | "ceil" | "log" | "sqrt" | "isempty"
-                | "isnotempty" | "array_length" => args.len() == 1,
-                "coalesce" => !args.is_empty(),
-                "bin" | "split" => args.len() == 2,
-                "if" | "substring" | "replace" => args.len() == 3,
-                "round" => (1..=2).contains(&args.len()),
-                _ => crate::functions::is_builtin_function(&lower),
-            };
-            if !valid_arity {
+            if !crate::functions::is_builtin_function(&lower) {
+                return Err(DiagnosticBundle::one(Diagnostic::error(
+                    "LQL101",
+                    format!("unknown function '{}'", name),
+                    Some(span),
+                )));
+            }
+            if crate::functions::validate_function_arity(&lower, args).is_err() {
                 return Err(DiagnosticBundle::one(Diagnostic::error(
                     "LQL104",
                     format!("invalid argument count for {}()", name),
@@ -826,19 +814,12 @@ fn type_expr(expr: &Expr, columns: &[TypedColumn]) -> Result<TypedExpr, Diagnost
                 .iter()
                 .map(|a| type_expr(a, columns))
                 .collect::<Result<Vec<_>, _>>()?;
-            let ty = match lower.as_str() {
-                "now" | "ago" | "bin" => ValueType::Timestamp,
-                "strlen" | "typeof" | "to_string" | "tolower" | "toupper" | "trim"
-                | "substring" | "replace" => ValueType::String,
-                "if" => typed_args
-                    .get(1)
-                    .map(|a| a.field_type.clone())
-                    .unwrap_or(ValueType::Unknown),
-                "to_int" => ValueType::Int,
-                "to_float" => ValueType::Float,
-                "isempty" | "isnotempty" => ValueType::Bool,
-                _ => typed_args
-                    .first()
+            let signature = crate::functions::function_signature(&lower)
+                .expect("is_builtin_function and the catalog must agree");
+            let ty = match &signature.returns {
+                crate::functions::ReturnType::Fixed(value_type) => value_type.clone(),
+                crate::functions::ReturnType::Arg(index) => typed_args
+                    .get(*index)
                     .map(|a| a.field_type.clone())
                     .unwrap_or(ValueType::Unknown),
             };

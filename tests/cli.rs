@@ -33,6 +33,29 @@ fn query_requires_connection_configuration() {
 }
 
 #[test]
+fn query_rejects_plain_api_key() {
+    let output = run(&[
+        "query",
+        "--endpoint",
+        "https://remote.example",
+        "--collector",
+        "demo",
+        "--api-key",
+        "secret",
+        "--query",
+        "from events",
+    ]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("plain --api-key is not supported"),
+        "{}",
+        stderr
+    );
+    assert!(stderr.contains("--api-key-env"), "{}", stderr);
+}
+
+#[test]
 fn invalid_json_query_returns_structured_diagnostics() {
     let output = run(&["check", "--json", "from events | where missing = 1"]);
     assert!(!output.status.success());

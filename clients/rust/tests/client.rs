@@ -166,6 +166,58 @@ fn allows_api_key_over_tls_to_remote_host() {
         endpoint: Some("https://remote.example".into()),
         collector: Some("demo".into()),
         api_key: Some("secret-api-key".into()),
+fn rejects_credentials_over_plaintext_nonlocal_endpoint() {
+    let configs = [
+        ConnectionConfig {
+            endpoint: Some("http://remote.example".into()),
+            collector: Some("demo".into()),
+            api_key: Some("api-key".into()),
+            ..Default::default()
+        },
+        ConnectionConfig {
+            endpoint: Some("http://remote.example".into()),
+            collector: Some("demo".into()),
+            username: Some("user".into()),
+            password: Some("pass".into()),
+            ..Default::default()
+        },
+    ];
+    for config in configs {
+        let error = match Client::new(config) {
+            Ok(_) => panic!("credentials over a plaintext non-local endpoint must be rejected"),
+            Err(error) => error,
+        };
+        assert_eq!(error.category, ErrorCategory::InvalidConfiguration);
+        assert!(error.message.contains("TLS"));
+    }
+}
+
+#[test]
+fn rejects_dsn_tls_false_with_credentials_for_nonlocal_host() {
+    let error = match Client::new(ConnectionConfig {
+        dsn: Some("loza://user:pass@remote.example/demo?tls=false".into()),
+        ..Default::default()
+    }) {
+        Ok(_) => panic!("DSN tls=false with credentials must be rejected for non-local hosts"),
+        Err(error) => error,
+    };
+    assert_eq!(error.category, ErrorCategory::InvalidConfiguration);
+    assert!(error.message.contains("TLS"));
+}
+
+#[test]
+fn allows_credentials_over_tls_or_loopback() {
+    assert!(Client::new(ConnectionConfig {
+        endpoint: Some("https://remote.example".into()),
+        collector: Some("demo".into()),
+        api_key: Some("api-key".into()),
+        ..Default::default()
+    })
+    .is_ok());
+    assert!(Client::new(ConnectionConfig {
+        endpoint: Some("http://127.0.0.1:9308".into()),
+        collector: Some("demo".into()),
+        api_key: Some("api-key".into()),
         ..Default::default()
     })
     .is_ok());
@@ -179,4 +231,33 @@ fn allows_unauthenticated_plaintext_http_to_remote_host() {
         ..Default::default()
     })
     .is_ok());
+fn oversized_response_is_rejected_while_streaming() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buffer = [0_u8; 8192];
+        let _ = stream.read(&mut buffer).unwrap();
+        let body = "x".repeat(4096);
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+    });
+    let client = Client::new(ConnectionConfig {
+        endpoint: Some(format!("http://{address}")),
+        collector: Some("demo".into()),
+        max_response_bytes: Some(64),
+        ..Default::default()
+    })
+    .unwrap();
+    let error = match client.query("from events", HashMap::new(), 10) {
+        Ok(_) => panic!("an oversized response must be rejected"),
+        Err(error) => error,
+    };
+    assert_eq!(error.category, ErrorCategory::MalformedResponse);
+    assert!(error.message.contains("size limit"));
+    server.join().unwrap();
 }

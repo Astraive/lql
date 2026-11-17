@@ -119,14 +119,16 @@ fn connection_config(args: &[String]) -> Result<ConnectionConfig, String> {
     let endpoint = flag_value(args, "--endpoint");
     let collector = flag_value(args, "--collector");
     let database_connection = flag_value(args, "--database-connection");
-    let api_key = flag_value(args, "--api-key")
-        .or_else(|| flag_value(args, "--api-key-env").and_then(|name| std::env::var(name).ok()));
+    let api_key = flag_value(args, "--api-key-env").and_then(|name| std::env::var(name).ok());
     let username = flag_value(args, "--username");
     let password = flag_value(args, "--password-env").and_then(|name| std::env::var(name).ok());
     let env = flag_value(args, "--env");
     let service = flag_value(args, "--service");
     if flag_value(args, "--password").is_some() {
         return Err("plain --password is not supported; use --password-env".into());
+    }
+    if flag_value(args, "--api-key").is_some() {
+        return Err("plain --api-key is not supported; use --api-key-env".into());
     }
     let dsn = value.or_else(|| std::env::var("LOZA_DSN").ok());
     if dsn.is_none() && endpoint.is_none() {

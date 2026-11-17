@@ -161,6 +161,18 @@ impl Client {
                 "API key authentication"
             };
             return Err(config_error(&format!("{mechanism} requires TLS")));
+        // Any credential placed in an Authorization header must be protected in
+        // transit. Plaintext is only acceptable for loopback (local development)
+        // endpoints; this also rejects DSNs that opt into `tls=false` while
+        // carrying credentials for a non-local host.
+        let has_credentials = !api_key.is_empty() || !username.is_empty() || !password.is_empty();
+        if has_credentials
+            && endpoint_url.scheme() == "http"
+            && !is_localhost(endpoint_url.host_str().unwrap_or_default())
+        {
+            return Err(config_error(
+                "authentication requires TLS for non-local endpoints",
+            ));
         }
         let timeout = config.timeout.unwrap_or(Duration::from_secs(30));
         let http = HttpClient::builder()
@@ -225,6 +237,9 @@ impl Client {
         // Bound the read so an oversized response is never buffered in full
         // before the size limit is enforced. Reading at most one byte past the
         // limit is enough to detect excess while keeping peak memory bounded.
+        // Stream the body behind a hard cap: read at most one byte beyond the
+        // limit so an oversized response is detected without ever buffering the
+        // whole (potentially unbounded) body in memory.
         let mut bytes = Vec::new();
         response
             .take(self.max_response_bytes.saturating_add(1) as u64)

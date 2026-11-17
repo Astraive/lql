@@ -20,12 +20,12 @@ cargo run --bin lql -- check 'from events | where duration_ms > 1000'
 Library usage:
 
 ```rust
-use lql::{compile_to_duckdb, compile_to_clickhouse, compile_to_postgres};
+use lql::{render_query, Target};
 
 let query = r#"from events | where level = "error" | limit 10"#;
-let duckdb_sql = compile_to_duckdb(query)?;
-let clickhouse_sql = compile_to_clickhouse(query)?;
-let postgres_sql = compile_to_postgres(query)?;
+let plan = render_query(query, Target::DuckDB)?;
+// `plan.sql` contains bind placeholders and `plan.parameters` holds the values.
+// Pass both to your driver so values are bound, never string-interpolated.
 ```
 
 The `compile_to_*` wrappers and `compile` use the permissive
@@ -34,6 +34,15 @@ queries, use `compile_with_policy` (or `render_query_with_options`) with an
 explicit `QueryPolicy` and scope so that source/field allowlists, sensitive
 fields, row/parameter limits, and scope filters are enforced before SQL is
 produced.
+> [!WARNING]
+> The legacy `compile_to_duckdb`, `compile_to_clickhouse`, and `compile_to_postgres`
+> wrappers inline filter/literal values directly into the SQL string. They now
+> escape string literals per dialect (including ClickHouse backslash escaping)
+> and perform placeholder substitution in a single pass, but they remain
+> **trusted-tooling-only** helpers best suited to static queries. When any part
+> of a query comes from an untrusted source, use `render_query` /
+> `render_query_with_parameters` and bind the returned parameters through your
+> database driver instead.
 
 ## Collector-managed database targets
 

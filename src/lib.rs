@@ -500,6 +500,14 @@ fn compile_compat(input: &str, target: Target) -> Result<String, LqlError> {
 ///
 /// Uses [`QueryPolicy::default()`], which is permissive. For untrusted input,
 /// use [`compile_with_policy`] with an explicit policy and scope.
+/// Compile a query using the legacy compatibility SQL-only wrapper.
+///
+/// # Security
+/// This wrapper inlines values directly into the SQL string. It escapes string
+/// literals for the target dialect, but it is intended for **trusted tooling
+/// and static queries only**. For untrusted input, use [`render_query`] (or
+/// [`render_query_with_parameters`]) and pass the returned bind parameters to
+/// your driver instead of inlining them.
 pub fn compile_to_duckdb(input: &str) -> Result<String, LqlError> {
     compile_with_policy(
         input,
@@ -516,6 +524,14 @@ pub fn compile_to_duckdb(input: &str) -> Result<String, LqlError> {
 ///
 /// Uses [`QueryPolicy::default()`], which is permissive. For untrusted input,
 /// use [`compile_with_policy`] with an explicit policy and scope.
+/// Compile a query using the legacy compatibility SQL-only wrapper.
+///
+/// # Security
+/// This wrapper inlines values directly into the SQL string. It escapes string
+/// literals for the target dialect (including ClickHouse backslash escaping),
+/// but it is intended for **trusted tooling and static queries only**. For
+/// untrusted input, use [`render_query`] (or [`render_query_with_parameters`])
+/// and pass the returned bind parameters to your driver instead of inlining.
 pub fn compile_to_clickhouse(input: &str) -> Result<String, LqlError> {
     compile_with_policy(
         input,
@@ -532,6 +548,14 @@ pub fn compile_to_clickhouse(input: &str) -> Result<String, LqlError> {
 ///
 /// Uses [`QueryPolicy::default()`], which is permissive. For untrusted input,
 /// use [`compile_with_policy`] with an explicit policy and scope.
+/// Compile a query using the legacy compatibility SQL-only wrapper.
+///
+/// # Security
+/// This wrapper inlines values directly into the SQL string. It escapes string
+/// literals for the target dialect, but it is intended for **trusted tooling
+/// and static queries only**. For untrusted input, use [`render_query`] (or
+/// [`render_query_with_parameters`]) and pass the returned bind parameters to
+/// your driver instead of inlining them.
 pub fn compile_to_postgres(input: &str) -> Result<String, LqlError> {
     compile_with_policy(
         input,

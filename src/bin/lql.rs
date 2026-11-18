@@ -200,6 +200,16 @@ fn typed_value(value: &str) -> QueryValue {
     }
 }
 
+/// Point a connection config at a new DSN while preserving every other
+/// setting (endpoint, credentials, env, service, timeouts, ...).
+///
+/// The shell's `\connect` command must not rebuild the config from
+/// `Default`, otherwise explicitly supplied credentials and endpoints are
+/// silently dropped and subsequent queries lose authentication.
+fn apply_connect(config: &mut ConnectionConfig, dsn: &str) {
+    config.dsn = Some(dsn.trim().to_string());
+}
+
 fn run_shell(args: &[String]) {
     let mut config =
         connection_config(args).unwrap_or_else(|error| emit_message_error(false, &error));
@@ -220,11 +230,7 @@ fn run_shell(args: &[String]) {
         if pending.is_empty() && command.starts_with('\\') {
             match command.split_once(' ') {
                 Some(("\\connect", dsn)) => {
-                    config = ConnectionConfig {
-                        dsn: Some(dsn.trim().to_string()),
-                        database_connection: config.database_connection.clone(),
-                        ..Default::default()
-                    };
+                    apply_connect(&mut config, dsn);
                     match Client::new(config.clone()) {
                         Ok(next) => {
                             client = next;
@@ -445,6 +451,55 @@ mod tests {
             duration_ms: 0,
             row_count,
         }
+    }
+
+    #[test]
+    fn connect_updates_dsn_without_discarding_existing_settings() {
+        let mut config = ConnectionConfig {
+            dsn: Some("loza://old".into()),
+            endpoint: Some("https://old.example.com".into()),
+            collector: Some("old-collector".into()),
+            api_key: Some("old-api-key".into()),
+            username: Some("old-user".into()),
+            password: Some("old-password".into()),
+            env: Some("old-env".into()),
+            service: Some("old-service".into()),
+            database_connection: Some("old-database".into()),
+            timeout: Some(std::time::Duration::from_secs(7)),
+            max_response_bytes: Some(4096),
+        };
+
+        apply_connect(&mut config, "  loza://new  ");
+
+        assert_eq!(config.dsn.as_deref(), Some("loza://new"));
+        assert_eq!(config.endpoint.as_deref(), Some("https://old.example.com"));
+        assert_eq!(config.collector.as_deref(), Some("old-collector"));
+        assert_eq!(config.api_key.as_deref(), Some("old-api-key"));
+        assert_eq!(config.username.as_deref(), Some("old-user"));
+        assert_eq!(config.password.as_deref(), Some("old-password"));
+        assert_eq!(config.env.as_deref(), Some("old-env"));
+        assert_eq!(config.service.as_deref(), Some("old-service"));
+        assert_eq!(config.database_connection.as_deref(), Some("old-database"));
+        assert_eq!(config.timeout, Some(std::time::Duration::from_secs(7)));
+        assert_eq!(config.max_response_bytes, Some(4096));
+    }
+
+    #[test]
+    fn connect_leaves_unset_fields_unset_for_dsn_derived_credentials() {
+        let mut config = ConnectionConfig {
+            dsn: Some("loza://old".into()),
+            database_connection: Some("selected".into()),
+            ..Default::default()
+        };
+
+        apply_connect(&mut config, "loza://new");
+
+        assert_eq!(config.dsn.as_deref(), Some("loza://new"));
+        assert_eq!(config.endpoint, None);
+        assert_eq!(config.api_key, None);
+        assert_eq!(config.username, None);
+        assert_eq!(config.password, None);
+        assert_eq!(config.database_connection.as_deref(), Some("selected"));
     }
 
     #[test]

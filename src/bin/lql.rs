@@ -286,6 +286,55 @@ fn run_shell(args: &[String]) {
     }
 }
 
+/// Escape a single CSV field according to RFC 4180 and neutralize spreadsheet
+/// formula injection.
+///
+/// A value starting with a formula trigger (`'`, `=`, `+`, `-`, `@`) is prefixed
+/// with an apostrophe so spreadsheet applications treat it as literal text.
+/// Fields containing a comma, quote or line break are wrapped in double quotes,
+/// with any embedded quotes doubled.
+fn csv_field(value: &str) -> String {
+    let neutralized = match value.chars().next() {
+        Some('\'' | '=' | '+' | '-' | '@') => format!("'{}", value),
+        _ => value.to_string(),
+    };
+    if neutralized
+        .chars()
+        .any(|c| matches!(c, ',' | '"' | '\r' | '\n'))
+    {
+        format!("\"{}\"", neutralized.replace('"', "\"\""))
+    } else {
+        neutralized
+    }
+}
+
+/// Write a query result as CSV, escaping every header and cell value.
+fn write_csv<W: Write>(result: &lql_client::QueryResult, mut out: W) -> io::Result<()> {
+    let header = result
+        .columns
+        .iter()
+        .map(|column| csv_field(&column.name))
+        .collect::<Vec<_>>()
+        .join(",");
+    writeln!(out, "{}", header)?;
+    for row in &result.rows {
+        let line = result
+            .columns
+            .iter()
+            .map(|column| {
+                let value = row
+                    .get(&column.name)
+                    .map(|v| v.to_string())
+                    .unwrap_or_default();
+                csv_field(&value)
+            })
+            .collect::<Vec<_>>()
+            .join(",");
+        writeln!(out, "{}", line)?;
+    }
+    Ok(())
+}
+
 fn print_result(result: &lql_client::QueryResult, format: &str) {
     match format {
         "json" => println!(
@@ -293,28 +342,8 @@ fn print_result(result: &lql_client::QueryResult, format: &str) {
             serde_json::to_string(result).unwrap_or_else(|_| "{}".into())
         ),
         "csv" => {
-            println!(
-                "{}",
-                result
-                    .columns
-                    .iter()
-                    .map(|column| column.name.as_str())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
-            for row in &result.rows {
-                println!(
-                    "{}",
-                    result
-                        .columns
-                        .iter()
-                        .map(|column| row
-                            .get(&column.name)
-                            .map(|v| v.to_string())
-                            .unwrap_or_default())
-                        .collect::<Vec<_>>()
-                        .join(",")
-                );
+            if let Err(error) = write_csv(result, io::stdout().lock()) {
+                eprintln!("error writing CSV output: {}", error);
             }
         }
         _ => {
@@ -392,4 +421,62 @@ fn emit_diagnostics(json_output: bool, bundle: &lql::DiagnosticBundle, source: &
 
 fn print_usage() {
     println!("Loza Query Language (LQL) compiler and live client\n\nUsage:\n  lql compile [--json] <query>\n  lql compile-ch [--json] <query>\n  lql check [--json] <query>\n  lql query --dsn <loza://...> --query <source> [--database-connection NAME] [--param name=value]\n  lql connect [<dsn>] [--database-connection NAME]\n  lql shell [<dsn>] [--database-connection NAME]\n  lql serve --stdio\n  lql fields [--json]");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lql_client::QueryColumn;
+    use serde_json::{json, Value};
+    use std::collections::HashMap;
+
+    fn query_result(names: &[&str], rows: Vec<HashMap<String, Value>>) -> lql_client::QueryResult {
+        let row_count = rows.len();
+        lql_client::QueryResult {
+            columns: names
+                .iter()
+                .map(|name| QueryColumn {
+                    name: (*name).to_string(),
+                    value_type: "string".to_string(),
+                    nullable: true,
+                })
+                .collect(),
+            rows,
+            duration_ms: 0,
+            row_count,
+        }
+    }
+
+    #[test]
+    fn csv_field_quotes_commas_quotes_and_newlines() {
+        assert_eq!(csv_field("plain"), "plain");
+        assert_eq!(csv_field("a,b"), "\"a,b\"");
+        assert_eq!(csv_field("say \"hi\""), "\"say \"\"hi\"\"\"");
+        assert_eq!(csv_field("line1\nline2"), "\"line1\nline2\"");
+        assert_eq!(csv_field("a\r\nb"), "\"a\r\nb\"");
+    }
+
+    #[test]
+    fn csv_field_neutralizes_leading_formula_characters() {
+        for value in ["'leading", "=1+1", "+cmd", "-42", "@SUM(A1)"] {
+            assert_eq!(csv_field(value), format!("'{}", value));
+        }
+        // Neutralization and quoting compose for a value that also has a comma.
+        assert_eq!(csv_field("=a,b"), "\"'=a,b\"");
+    }
+
+    #[test]
+    fn write_csv_escapes_headers_and_rows() {
+        let mut row = HashMap::new();
+        row.insert("last,name".to_string(), json!("Doe, John"));
+        row.insert("net".to_string(), json!(-5));
+        let result = query_result(&["last,name", "net"], vec![row]);
+
+        let mut out = Vec::new();
+        write_csv(&result, &mut out).unwrap();
+        assert_eq!(
+            String::from_utf8(out).unwrap(),
+            "\"last,name\",net\n\"\"\"Doe, John\"\"\",'-5\n"
+        );
+    }
 }

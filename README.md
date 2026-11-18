@@ -28,6 +28,13 @@ let clickhouse_sql = compile_to_clickhouse(query)?;
 let postgres_sql = compile_to_postgres(query)?;
 ```
 
+The `compile_to_*` wrappers and `compile` use the permissive
+`QueryPolicy::default()` and are intended for trusted input. For untrusted
+queries, use `compile_with_policy` (or `render_query_with_options`) with an
+explicit `QueryPolicy` and scope so that source/field allowlists, sensitive
+fields, row/parameter limits, and scope filters are enforced before SQL is
+produced.
+
 ## Collector-managed database targets
 
 The released client uses only `loza://` Collector DSNs for transport and

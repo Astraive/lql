@@ -645,7 +645,16 @@ fn inline_parameters(plan: &CompiledQuery) -> String {
     let mut sql = plan.sql.clone();
     for (index, parameter) in plan.parameters.iter().enumerate() {
         let value = match &parameter.value {
-            Value::String(s) => format!("'{}'", s.replace('\'', "''")),
+            Value::String(s) => {
+                // ClickHouse treats backslash as an escape character inside string
+                // literals. Escape backslashes before quotes so a trailing backslash
+                // cannot neutralize a doubled quote and break out of the literal.
+                let escaped = match plan.target {
+                    Target::ClickHouse => s.replace('\\', "\\\\").replace('\'', "''"),
+                    _ => s.replace('\'', "''"),
+                };
+                format!("'{}'", escaped)
+            }
             Value::Null => "NULL".to_string(),
             other => other.to_string(),
         };

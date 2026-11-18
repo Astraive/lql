@@ -201,8 +201,16 @@ fn compile_expr_with_aliases(
 
 fn compile_literal(lit: &Literal) -> Result<String, LqlError> {
     match lit {
-        Literal::String(s) | Literal::Timestamp(s) => Ok(format!("'{}'", s.replace('\'', "''"))),
-        Literal::Dynamic(value) => Ok(format!("'{}'", value.to_string().replace('\'', "''"))),
+        // ClickHouse treats backslash as an escape character inside single-quoted
+        // string literals. Escape backslashes first, then quotes, so a trailing
+        // backslash cannot neutralize the doubled quote and break out of the literal.
+        Literal::String(s) | Literal::Timestamp(s) => {
+            Ok(format!("'{}'", s.replace('\\', "\\\\").replace('\'', "''")))
+        }
+        Literal::Dynamic(value) => Ok(format!(
+            "'{}'",
+            value.to_string().replace('\\', "\\\\").replace('\'', "''")
+        )),
         Literal::Integer(n) => Ok(n.to_string()),
         Literal::Float(n) => Ok(n.to_string()),
         Literal::Bool(b) => Ok(if *b { "true" } else { "false" }.to_string()),

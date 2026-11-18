@@ -90,6 +90,49 @@ fn clickhouse_percentile() {
 }
 
 #[test]
+fn clickhouse_string_literals_escape_backslashes() {
+    // A backslash followed by a quote must be escaped too. Without it, `\'` is
+    // consumed as an escaped quote and the trailing text breaks out of the literal.
+    let sql = compile_to_clickhouse(r#"from events | where service = "a\\' OR 1=1 --""#).unwrap();
+    assert!(
+        sql.contains("'a\\\\'' OR 1=1 --'"),
+        "backslash must be doubled so the payload stays inside the literal: {sql}"
+    );
+}
+
+#[test]
+fn clickhouse_compiler_literal_escapes_backslashes() {
+    // Exercises compiler::clickhouse::compile directly (the location named in the
+    // finding), alongside the public compile_to_clickhouse path above.
+    let pipeline = parse(r#"from events | where service = "a\\' OR 1=1 --""#).unwrap();
+    let sql =
+        lql::compiler::clickhouse::compile(&pipeline, &lql::Schema::clickhouse_default()).unwrap();
+    assert!(
+        sql.contains("\"service\" = 'a\\\\'' OR 1=1 --'"),
+        "direct compiler must double the backslash: {sql}"
+    );
+}
+
+#[test]
+fn clickhouse_string_literals_escape_single_quotes() {
+    // Doubling of single quotes must remain intact after adding backslash escaping.
+    let sql = compile_to_clickhouse(r#"from events | where service = "o'brien""#).unwrap();
+    assert!(
+        sql.contains("'o''brien'"),
+        "single quotes must still be doubled: {sql}"
+    );
+}
+
+#[test]
+fn clickhouse_string_literals_escape_standalone_backslashes() {
+    let sql = compile_to_clickhouse(r#"from events | where path = "C:\\temp\\new""#).unwrap();
+    assert!(
+        sql.contains("'C:\\\\temp\\\\new'"),
+        "every backslash must be doubled: {sql}"
+    );
+}
+
+#[test]
 fn clickhouse_timeseries() {
     let sql = compile_to_clickhouse("from events | timeseries 1h").unwrap();
     assert!(sql.contains("toStartOfInterval"));

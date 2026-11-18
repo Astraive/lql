@@ -35,7 +35,9 @@ def _logical_type(schema: dict[str, Any]) -> str:
         variants = {_logical_type(item) for item in one_of if isinstance(item, dict)}
         if len(variants) == 1:
             return variants.pop()
-        if variants and variants <= set(TYPE_MAP.values()):
+        # A nested oneOf with multiple distinct variants resolves to "dynamic", so
+        # "dynamic" is itself a valid logical type that a variant may resolve to.
+        if variants and variants <= set(TYPE_MAP.values()) | {"dynamic"}:
             return "dynamic"
         raise ValueError("canonical field has an unsupported oneOf type")
     if schema.get("properties") is not None or schema.get("additionalProperties") is not None:

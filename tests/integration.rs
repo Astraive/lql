@@ -1,7 +1,7 @@
 use lql::{
     compile_to_clickhouse, compile_to_duckdb, compile_to_postgres, compile_with_policy, parse,
-    render_query, render_query_with_parameters, validate_query, QueryPolicy, Schema, Target,
-    ValueType,
+    render_query, render_query_with_context, render_query_with_parameters, validate_query,
+    QueryPolicy, Schema, Target, ValueType,
 };
 
 #[test]
@@ -552,4 +552,46 @@ fn policy_compile_applies_scope_filter() {
 #[test]
 fn compatibility_wrapper_still_enforces_default_source_policy() {
     assert!(compile_to_duckdb("from incidents | limit 1").is_err());
+}
+
+// ── Scope filter placement (MASS-1000 / issue #62) ──────────────────────────
+
+#[test]
+fn scope_filter_is_applied_before_column_replacing_transforms() {
+    // The scope predicate references the base-table columns `collector` and
+    // `environment`. `summarize` replaces the column set, so a scope `where`
+    // appended at the end of the pipeline fails analysis with
+    // "unknown field 'collector'". The filter belongs immediately after
+    // `from`, before any transform, so it filters at scan time.
+    let scope = serde_json::json!({ "collector": "edge", "environment": "prod" });
+
+    let plan = render_query_with_context(
+        r#"from events | summarize count() by service"#,
+        Target::DuckDB,
+        &serde_json::Value::Null,
+        &scope,
+    )
+    .expect("scoped query with a column-replacing transform must compile");
+
+    assert!(plan.sql.contains("WHERE"), "{sql}", sql = plan.sql);
+    assert!(plan.sql.contains("collector"), "{sql}", sql = plan.sql);
+    assert!(plan.sql.contains("environment"), "{sql}", sql = plan.sql);
+
+    // The scope filter must run before aggregation, not after it.
+    let where_pos = plan.sql.find("WHERE").expect("WHERE clause");
+    let group_pos = plan.sql.find("GROUP BY").expect("GROUP BY clause");
+    assert!(
+        where_pos < group_pos,
+        "scope filter must precede aggregation: {sql}",
+        sql = plan.sql
+    );
+
+    // The trusted scope values are bound into the plan.
+    let values: Vec<_> = plan
+        .parameters
+        .iter()
+        .filter_map(|p| p.value.as_str())
+        .collect();
+    assert!(values.contains(&"edge"), "{values:?}");
+    assert!(values.contains(&"prod"), "{values:?}");
 }

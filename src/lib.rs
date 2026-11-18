@@ -160,7 +160,21 @@ fn append_scope_filter(
         op: ast::BinOp::And,
         right: Box::new(right),
     }) {
-        pipeline.statements.push(Statement::Where(predicate));
+        // The scope predicate references base-table columns (`collector`,
+        // `environment`). Transforms such as Project/Summarize/Timeseries
+        // replace the column set, so a trailing `Where` would either fail
+        // type checking with "unknown field 'collector'" or filter after
+        // aggregation. Insert it immediately after `From` so it filters at
+        // scan time, before any transform runs.
+        let insert_at = pipeline
+            .statements
+            .iter()
+            .position(|statement| matches!(statement, Statement::From(_)))
+            .map(|index| index + 1)
+            .unwrap_or(pipeline.statements.len());
+        pipeline
+            .statements
+            .insert(insert_at, Statement::Where(predicate));
     }
     Ok(())
 }

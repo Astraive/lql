@@ -215,7 +215,10 @@ impl LqlError {
 }
 
 pub fn line_column(source: &str, byte_offset: usize) -> (usize, usize) {
-    let offset = byte_offset.min(source.len());
+    let mut offset = byte_offset.min(source.len());
+    while offset > 0 && !source.is_char_boundary(offset) {
+        offset -= 1;
+    }
     let before = &source[..offset];
     let line = before.bytes().filter(|b| *b == b'\n').count() + 1;
     let column = before
@@ -223,4 +226,35 @@ pub fn line_column(source: &str, byte_offset: usize) -> (usize, usize) {
         .next()
         .map_or(1, |line| line.chars().count() + 1);
     (line, column)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_column_handles_non_char_boundary_offset() {
+        // 'é' is two bytes (offsets 1..=2); offset 1 is its start, offset 2 is
+        // inside it and must be clamped back to 1 rather than panicking.
+        let source = "aé\nb";
+        assert_eq!(line_column(source, 1), (1, 2));
+        assert_eq!(line_column(source, 2), (1, 2));
+        assert_eq!(line_column(source, 3), (1, 3));
+        assert_eq!(line_column(source, 4), (2, 1));
+        assert_eq!(line_column(source, 5), (2, 2));
+    }
+
+    #[test]
+    fn line_column_clamps_out_of_range_and_zero_offsets() {
+        let source = "aé\nb";
+        assert_eq!(line_column(source, usize::MAX), (2, 2));
+        assert_eq!(line_column(source, 0), (1, 1));
+    }
+
+    #[test]
+    fn span_clamp_to_still_agrees_with_line_column_on_non_boundary_offsets() {
+        let source = "aé\nb";
+        let span = Span::empty(1).clamp_to(source);
+        assert_eq!(line_column(source, 1), line_column(source, span.start));
+    }
 }

@@ -150,12 +150,16 @@ impl Client {
             return Err(config_error("basic username requires a password"));
         }
         if !api_key.is_empty() && !username.is_empty() { /* Bearer precedence is intentional. */ }
-        if api_key.is_empty()
-            && !username.is_empty()
+        if (!api_key.is_empty() || !username.is_empty())
             && endpoint_url.scheme() == "http"
             && !is_localhost(endpoint_url.host_str().unwrap_or_default())
         {
-            return Err(config_error("basic authentication requires TLS"));
+            let mechanism = if api_key.is_empty() {
+                "basic authentication"
+            } else {
+                "API key authentication"
+            };
+            return Err(config_error(&format!("{mechanism} requires TLS")));
         }
         let timeout = config.timeout.unwrap_or(Duration::from_secs(30));
         let http = HttpClient::builder()

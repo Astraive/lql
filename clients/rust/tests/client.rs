@@ -73,3 +73,73 @@ fn rejects_client_database_dsns() {
         assert_eq!(error.category, ErrorCategory::InvalidConfiguration);
     }
 }
+
+#[test]
+fn rejects_api_key_over_plaintext_http_to_remote_host() {
+    let error = match Client::new(ConnectionConfig {
+        endpoint: Some("http://remote.example".into()),
+        collector: Some("demo".into()),
+        api_key: Some("secret-api-key".into()),
+        ..Default::default()
+    }) {
+        Ok(_) => panic!("API key over plaintext HTTP must be rejected"),
+        Err(error) => error,
+    };
+    assert_eq!(error.category, ErrorCategory::InvalidConfiguration);
+    assert!(error.message.contains("TLS"), "{}", error.message);
+}
+
+#[test]
+fn rejects_api_key_from_plaintext_dsn_to_remote_host() {
+    let error = match Client::new(ConnectionConfig {
+        dsn: Some("loza://remote.example/demo?tls=false".into()),
+        api_key: Some("secret-api-key".into()),
+        ..Default::default()
+    }) {
+        Ok(_) => panic!("API key over plaintext DSN must be rejected"),
+        Err(error) => error,
+    };
+    assert_eq!(error.category, ErrorCategory::InvalidConfiguration);
+    assert!(error.message.contains("TLS"), "{}", error.message);
+}
+
+#[test]
+fn rejects_basic_auth_over_plaintext_http_to_remote_host() {
+    let error = match Client::new(ConnectionConfig {
+        endpoint: Some("http://remote.example".into()),
+        collector: Some("demo".into()),
+        username: Some("user".into()),
+        password: Some("pass".into()),
+        ..Default::default()
+    }) {
+        Ok(_) => panic!("basic auth over plaintext HTTP must be rejected"),
+        Err(error) => error,
+    };
+    assert_eq!(error.category, ErrorCategory::InvalidConfiguration);
+    assert!(
+        error.message.contains("basic authentication requires TLS"),
+        "{}",
+        error.message
+    );
+}
+
+#[test]
+fn allows_api_key_over_tls_to_remote_host() {
+    assert!(Client::new(ConnectionConfig {
+        endpoint: Some("https://remote.example".into()),
+        collector: Some("demo".into()),
+        api_key: Some("secret-api-key".into()),
+        ..Default::default()
+    })
+    .is_ok());
+}
+
+#[test]
+fn allows_unauthenticated_plaintext_http_to_remote_host() {
+    assert!(Client::new(ConnectionConfig {
+        endpoint: Some("http://remote.example".into()),
+        collector: Some("demo".into()),
+        ..Default::default()
+    })
+    .is_ok());
+}

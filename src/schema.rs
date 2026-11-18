@@ -137,6 +137,9 @@ impl Schema {
                 .get("name")
                 .and_then(Value::as_str)
                 .ok_or_else(|| "schema field name is required".to_string())?;
+            if !is_valid_field_name(name) {
+                return Err(format!("invalid schema field name '{name}'"));
+            }
             if columns.contains_key(name) {
                 return Err(format!("duplicate schema field '{name}'"));
             }
@@ -153,6 +156,11 @@ impl Schema {
                 .get("column")
                 .and_then(Value::as_str)
                 .ok_or_else(|| format!("schema field '{name}' physical column is required"))?;
+            if !is_valid_ident(physical_column) {
+                return Err(format!(
+                    "invalid physical column '{physical_column}' for schema field '{name}'"
+                ));
+            }
             let storage = physical
                 .get("storage")
                 .and_then(Value::as_str)
@@ -254,28 +262,44 @@ impl Schema {
             }
             return match target {
                 crate::compiler::Target::DuckDB => {
-                    format!("json_extract_string({}, '$.{}')", column, field)
+                    format!(
+                        "json_extract_string({}, '$.{}')",
+                        column,
+                        escape_sql_string(field)
+                    )
                 }
                 crate::compiler::Target::ClickHouse => {
-                    format!("JSONExtractString({}, '{}')", column, field)
+                    format!(
+                        "JSONExtractString({}, '{}')",
+                        column,
+                        escape_clickhouse_string(field)
+                    )
                 }
                 crate::compiler::Target::PostgreSQL => {
-                    format!("({}::jsonb ->> '{}')", column, field.replace('\'', "''"))
+                    format!("({}::jsonb ->> '{}')", column, escape_sql_string(field))
                 }
             };
         }
         match target {
             crate::compiler::Target::DuckDB => {
-                format!("json_extract_string({}, '$.{}')", self.raw_column, field)
+                format!(
+                    "json_extract_string({}, '$.{}')",
+                    self.raw_column,
+                    escape_sql_string(field)
+                )
             }
             crate::compiler::Target::ClickHouse => {
-                format!("JSONExtractString({}, '{}')", self.raw_column, field)
+                format!(
+                    "JSONExtractString({}, '{}')",
+                    self.raw_column,
+                    escape_clickhouse_string(field)
+                )
             }
             crate::compiler::Target::PostgreSQL => {
                 format!(
                     "({}::jsonb ->> '{}')",
                     self.raw_column,
-                    field.replace('\'', "''")
+                    escape_sql_string(field)
                 )
             }
         }
@@ -304,6 +328,36 @@ fn parse_field_type(name: &str) -> Result<FieldType, String> {
 
 fn quote_ident(value: &str) -> String {
     format!("\"{}\"", value.replace('"', "\"\""))
+}
+
+/// Escape a value for inclusion in a standard SQL single-quoted string
+/// literal. Doubling single quotes works for DuckDB and PostgreSQL, where a
+/// backslash is an ordinary character in a standard string literal.
+fn escape_sql_string(value: &str) -> String {
+    value.replace('\'', "''")
+}
+
+/// ClickHouse string literals use backslash escape sequences, so both
+/// backslashes and single quotes must be escaped.
+fn escape_clickhouse_string(value: &str) -> String {
+    value.replace('\\', "\\\\").replace('\'', "\\'")
+}
+
+/// Strict SQL identifier: an ASCII letter or underscore followed by ASCII
+/// letters, digits, or underscores. Rejects quotes, backslashes, whitespace
+/// and anything else that could alter generated SQL.
+fn is_valid_ident(value: &str) -> bool {
+    let mut chars = value.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() || first == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// JSON path field name: one or more dot-separated strict identifiers.
+fn is_valid_field_name(value: &str) -> bool {
+    !value.is_empty() && value.split('.').all(is_valid_ident)
 }
 
 #[cfg(test)]
@@ -371,5 +425,81 @@ mod revisioned_document_tests {
         );
         assert!(!schema.nullable("message"));
         assert!(schema.is_sensitive("message"));
+    }
+}
+
+#[cfg(test)]
+mod sql_injection_regression_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn document_with(column: &str, name: &str) -> serde_json::Value {
+        json!({
+            "schema_version": "v1",
+            "sources": {
+                "events": {
+                    "physical": "events",
+                    "fields": [{
+                        "name": name,
+                        "field_type": "string",
+                        "physical": {
+                            "column": column,
+                            "storage": "raw"
+                        }
+                    }]
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn rejects_field_name_that_breaks_out_of_sql_literal() {
+        let document = document_with("raw", r#"service' OR '1'='1"#);
+        let error = Schema::from_document(&document, "events").unwrap_err();
+        assert!(error.contains("invalid schema field name"), "{error}");
+    }
+
+    #[test]
+    fn rejects_physical_column_containing_sql() {
+        let document = document_with("raw' || (SELECT 1) || '", "message");
+        let error = Schema::from_document(&document, "events").unwrap_err();
+        assert!(error.contains("invalid physical column"), "{error}");
+    }
+
+    #[test]
+    fn column_expr_escapes_field_for_every_target() {
+        let schema = Schema::duckdb_default();
+        let field = r#"x' OR '1'='1"#;
+        assert_eq!(
+            schema.column_expr(field, crate::compiler::Target::DuckDB),
+            r#"json_extract_string(raw, '$.x'' OR ''1''=''1')"#
+        );
+        assert_eq!(
+            schema.column_expr(field, crate::compiler::Target::ClickHouse),
+            r"JSONExtractString(raw, 'x\' OR \'1\'=\'1')"
+        );
+        assert_eq!(
+            schema.column_expr(field, crate::compiler::Target::PostgreSQL),
+            r#"(raw::jsonb ->> 'x'' OR ''1''=''1')"#
+        );
+    }
+
+    #[test]
+    fn clickhouse_escapes_backslashes_in_field() {
+        let schema = Schema::clickhouse_default();
+        assert_eq!(
+            schema.column_expr(r"a\b", crate::compiler::Target::ClickHouse),
+            r"JSONExtractString(raw, 'a\\b')"
+        );
+    }
+
+    #[test]
+    fn valid_dotted_field_names_are_still_accepted() {
+        let document = document_with("payload", "error.code");
+        let schema = Schema::from_document(&document, "events").expect("valid dotted field name");
+        assert_eq!(
+            schema.column_expr("error.code", crate::compiler::Target::DuckDB),
+            "json_extract_string(payload, '$.error.code')"
+        );
     }
 }

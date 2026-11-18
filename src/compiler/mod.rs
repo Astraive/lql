@@ -208,8 +208,24 @@ fn render_aggregate(
         (AggFunction::Avg, Some(value)) => format!("AVG({})", value),
         (AggFunction::Min, Some(value)) => format!("MIN({})", value),
         (AggFunction::Max, Some(value)) => format!("MAX({})", value),
-        (AggFunction::First, Some(value)) => format!("FIRST_VALUE({})", value),
-        (AggFunction::Last, Some(value)) => format!("LAST_VALUE({})", value),
+        // FIRST_VALUE/LAST_VALUE are window functions that require an OVER()
+        // clause and are invalid in an aggregate (GROUP BY) context. Emit
+        // dialect-appropriate aggregate functions instead.
+        (AggFunction::First, Some(value)) => match ctx.target {
+            Target::DuckDB => format!("FIRST({})", value),
+            Target::ClickHouse => format!("any({})", value),
+            Target::PostgreSQL => format!("(array_agg({}))[1]", value),
+        },
+        (AggFunction::Last, Some(value)) => match ctx.target {
+            Target::DuckDB => format!("LAST({})", value),
+            Target::ClickHouse => format!("anyLast({})", value),
+            Target::PostgreSQL => {
+                format!(
+                    "(array_agg({}))[array_length(array_agg({}), 1)]",
+                    value, value
+                )
+            }
+        },
         (func, Some(value)) => {
             let pct = match func {
                 AggFunction::P50 => 0.5,

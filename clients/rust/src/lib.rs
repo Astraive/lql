@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fmt;
+use std::io::Read;
 use std::time::Duration;
 use url::Url;
 
@@ -217,8 +218,13 @@ impl Client {
             }
         })?;
         let status = response.status().as_u16();
-        let bytes = response
-            .bytes()
+        // Bound the read so an oversized response is never buffered in full
+        // before the size limit is enforced. Reading at most one byte past the
+        // limit is enough to detect excess while keeping peak memory bounded.
+        let mut bytes = Vec::new();
+        response
+            .take(self.max_response_bytes.saturating_add(1) as u64)
+            .read_to_end(&mut bytes)
             .map_err(|error| transport_error("LQL response could not be read", error))?;
         if bytes.len() > self.max_response_bytes {
             return Err(QueryError {

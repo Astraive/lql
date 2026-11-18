@@ -616,16 +616,32 @@ fn quote_ident(name: &str) -> String {
     }
 }
 
-/// Compatibility wrapper. New callers should use parse -> analyze -> render.
+/// Compatibility wrapper using [`crate::ir::QueryPolicy::default()`].
+///
+/// The default policy is permissive (no field, row, or complexity limits) and
+/// this function performs no scope binding. Use
+/// [`crate::compile_with_policy`] for untrusted input. New callers should use
+/// parse -> analyze -> render.
 pub fn compile(
     pipeline: &crate::ast::Pipeline,
     target: Target,
     schema: &crate::schema::Schema,
 ) -> Result<String, crate::error::LqlError> {
+    compile_with_policy(pipeline, target, schema, crate::ir::QueryPolicy::default())
+}
+
+/// Policy-aware compatibility compiler: analyze with an explicit policy, render,
+/// then inline bind parameters into a SQL string.
+pub fn compile_with_policy(
+    pipeline: &crate::ast::Pipeline,
+    target: Target,
+    schema: &crate::schema::Schema,
+    policy: crate::ir::QueryPolicy,
+) -> Result<String, crate::error::LqlError> {
     let options = crate::ir::AnalysisOptions {
         schema: schema.clone(),
         target,
-        policy: crate::ir::QueryPolicy::default(),
+        policy,
         language_version: "0.1".to_string(),
         clock: None,
     };

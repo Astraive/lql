@@ -1,6 +1,7 @@
 use lql::{
-    compile_to_clickhouse, compile_to_duckdb, compile_to_postgres, parse, render_query,
-    render_query_with_parameters, validate_query, Target, ValueType,
+    compile_to_clickhouse, compile_to_duckdb, compile_to_postgres, compile_with_policy, parse,
+    render_query, render_query_with_parameters, validate_query, QueryPolicy, Schema, Target,
+    ValueType,
 };
 
 #[test]
@@ -362,4 +363,150 @@ fn postgres_uses_numbered_parameters_and_native_dialect() {
     assert!(plan.sql.contains("$2"));
     let sql = compile_to_postgres("from events | where level = \"error\"").unwrap();
     assert!(sql.contains("'error'"));
+}
+
+// ── Policy-aware compatibility compile path (MASS-1001) ────────────────────
+
+fn policy_query(
+    input: &str,
+    policy: QueryPolicy,
+    parameters: &serde_json::Value,
+    scope: &serde_json::Value,
+) -> Result<String, lql::LqlError> {
+    compile_with_policy(
+        input,
+        Target::DuckDB,
+        parameters,
+        scope,
+        Schema::duckdb_default(),
+        policy,
+    )
+}
+
+#[test]
+fn policy_compile_matches_legacy_wrapper_under_default_policy() {
+    let input = r#"from events | where level = "error" | summarize count() by service | limit 3"#;
+    let legacy = compile_to_duckdb(input).unwrap();
+    let aware = policy_query(
+        input,
+        QueryPolicy::default(),
+        &serde_json::Value::Null,
+        &serde_json::Value::Null,
+    )
+    .unwrap();
+    assert_eq!(legacy, aware);
+}
+
+#[test]
+fn policy_compile_rejects_sensitive_fields() {
+    let policy = QueryPolicy {
+        sensitive_fields: vec!["message".to_string()],
+        ..QueryPolicy::default()
+    };
+    let error = policy_query(
+        r#"from events | project message"#,
+        policy,
+        &serde_json::Value::Null,
+        &serde_json::Value::Null,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("sensitive"), "{error}");
+
+    // The legacy wrapper keeps its permissive default-policy behavior.
+    assert!(compile_to_duckdb(r#"from events | project message"#).is_ok());
+}
+
+#[test]
+fn policy_compile_rejects_fields_outside_allowlist() {
+    let policy = QueryPolicy {
+        allowed_fields: vec!["service".to_string()],
+        ..QueryPolicy::default()
+    };
+    let error = policy_query(
+        "from events | project duration_ms",
+        policy,
+        &serde_json::Value::Null,
+        &serde_json::Value::Null,
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("not allowed by policy"),
+        "{error}"
+    );
+}
+
+#[test]
+fn policy_compile_enforces_allowed_sources() {
+    let policy = QueryPolicy {
+        allowed_sources: vec!["traces".to_string()],
+        ..QueryPolicy::default()
+    };
+    let error = policy_query(
+        "from events | limit 1",
+        policy,
+        &serde_json::Value::Null,
+        &serde_json::Value::Null,
+    )
+    .unwrap_err();
+    assert!(
+        error.to_string().contains("not declared or allowed"),
+        "{error}"
+    );
+}
+
+#[test]
+fn policy_compile_enforces_max_result_rows() {
+    let policy = QueryPolicy {
+        max_result_rows: Some(5),
+        ..QueryPolicy::default()
+    };
+    let sql = policy_query(
+        "from events | limit 100",
+        policy,
+        &serde_json::Value::Null,
+        &serde_json::Value::Null,
+    )
+    .unwrap();
+    assert!(sql.contains("LIMIT 5"), "{sql}");
+}
+
+#[test]
+fn policy_compile_enforces_max_parameters() {
+    let policy = QueryPolicy {
+        max_parameters: Some(1),
+        ..QueryPolicy::default()
+    };
+    let parameters = serde_json::json!({
+        "a": { "type": "int", "value": 1 },
+        "b": { "type": "int", "value": 2 }
+    });
+    let error =
+        policy_query("from events", policy, &parameters, &serde_json::Value::Null).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("parameter count exceeds policy limit"),
+        "{error}"
+    );
+}
+
+#[test]
+fn policy_compile_applies_scope_filter() {
+    let scope = serde_json::json!({ "collector": "edge", "environment": "prod" });
+    let sql = policy_query(
+        "from events | limit 10",
+        QueryPolicy::default(),
+        &serde_json::Value::Null,
+        &scope,
+    )
+    .unwrap();
+    assert!(sql.contains("collector"), "{sql}");
+    assert!(sql.contains("'edge'"), "{sql}");
+    assert!(sql.contains("environment"), "{sql}");
+    assert!(sql.contains("'prod'"), "{sql}");
+}
+
+#[test]
+fn compatibility_wrapper_still_enforces_default_source_policy() {
+    assert!(compile_to_duckdb("from incidents | limit 1").is_err());
 }

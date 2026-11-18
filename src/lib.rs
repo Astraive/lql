@@ -98,6 +98,28 @@ pub fn render_query_with_options(
     policy: QueryPolicy,
 ) -> Result<CompiledQuery, DiagnosticBundle> {
     let mut pipeline = parse_diagnostics(input)?;
+    prepare_pipeline(&mut pipeline, parameters, scope, &policy)?;
+    let options = AnalysisOptions {
+        schema,
+        target,
+        policy,
+        language_version: "0.1".to_string(),
+        clock: None,
+    };
+    let typed = analyze_pipeline(&pipeline, &options)?;
+    compiler::render(&typed, target)
+}
+
+/// Apply the parameter, scope and policy pre-analysis transformations to a
+/// parsed pipeline. This is the single shared policy-application step used by
+/// both the structured (`render_query_with_options`) and compatibility
+/// (`compile_with_policy`) entry points.
+fn prepare_pipeline(
+    pipeline: &mut Pipeline,
+    parameters: &serde_json::Value,
+    scope: &serde_json::Value,
+    policy: &QueryPolicy,
+) -> Result<(), DiagnosticBundle> {
     if let Some(max_parameters) = policy.max_parameters {
         let count = parameters
             .as_object()
@@ -111,17 +133,9 @@ pub fn render_query_with_options(
             )));
         }
     }
-    bind_pipeline(&mut pipeline, parameters)?;
-    append_scope_filter(&mut pipeline, scope)?;
-    let options = AnalysisOptions {
-        schema,
-        target,
-        policy,
-        language_version: "0.1".to_string(),
-        clock: None,
-    };
-    let typed = analyze_pipeline(&pipeline, &options)?;
-    compiler::render(&typed, target)
+    bind_pipeline(pipeline, parameters)?;
+    append_scope_filter(pipeline, scope)?;
+    Ok(())
 }
 
 fn append_scope_filter(
@@ -362,24 +376,74 @@ fn relocate_diagnostics(input: &str, mut bundle: DiagnosticBundle) -> Diagnostic
     bundle
 }
 
-/// Compile a query using the compatibility SQL-only wrapper.
-pub fn compile_to_duckdb(input: &str) -> Result<String, LqlError> {
-    let pipeline = parse(input)?;
-    compiler::compile(&pipeline, Target::DuckDB, &Schema::duckdb_default())
+/// Compile with an explicit policy, scope and parameters.
+///
+/// This is the policy-aware counterpart of the compatibility `compile_to_*`
+/// wrappers. It shares the full `render_query_with_options` pipeline
+/// (parameter binding, scope filtering, and policy-aware analysis) and returns
+/// a SQL string with bind values inlined. Use this for untrusted input:
+/// `allowed_sources`, `allowed_fields`, `sensitive_fields`, `max_result_rows`,
+/// `max_parameters` and the supplied scope are all enforced before rendering.
+pub fn compile_with_policy(
+    input: &str,
+    target: Target,
+    parameters: &serde_json::Value,
+    scope: &serde_json::Value,
+    schema: Schema,
+    policy: QueryPolicy,
+) -> Result<String, LqlError> {
+    let mut pipeline = parse(input)?;
+    prepare_pipeline(&mut pipeline, parameters, scope, &policy).map_err(|bundle| {
+        LqlError::Compile {
+            message: bundle.to_string(),
+            span: bundle.diagnostics.first().and_then(|d| d.primary_span),
+        }
+    })?;
+    compiler::compile_with_policy(&pipeline, target, &schema, policy)
 }
 
 /// Compile a query using the compatibility SQL-only wrapper.
-pub fn compile_to_clickhouse(input: &str) -> Result<String, LqlError> {
-    let pipeline = parse(input)?;
-    compiler::compile(&pipeline, Target::ClickHouse, &Schema::clickhouse_default())
+///
+/// Uses [`QueryPolicy::default()`], which is permissive. For untrusted input,
+/// use [`compile_with_policy`] with an explicit policy and scope.
+pub fn compile_to_duckdb(input: &str) -> Result<String, LqlError> {
+    compile_with_policy(
+        input,
+        Target::DuckDB,
+        &serde_json::Value::Null,
+        &serde_json::Value::Null,
+        Schema::duckdb_default(),
+        QueryPolicy::default(),
+    )
 }
+
 /// Compile a query using the compatibility SQL-only wrapper.
+///
+/// Uses [`QueryPolicy::default()`], which is permissive. For untrusted input,
+/// use [`compile_with_policy`] with an explicit policy and scope.
+pub fn compile_to_clickhouse(input: &str) -> Result<String, LqlError> {
+    compile_with_policy(
+        input,
+        Target::ClickHouse,
+        &serde_json::Value::Null,
+        &serde_json::Value::Null,
+        Schema::clickhouse_default(),
+        QueryPolicy::default(),
+    )
+}
+
+/// Compile a query using the compatibility SQL-only wrapper.
+///
+/// Uses [`QueryPolicy::default()`], which is permissive. For untrusted input,
+/// use [`compile_with_policy`] with an explicit policy and scope.
 pub fn compile_to_postgres(input: &str) -> Result<String, LqlError> {
-    let pipeline = parse(input)?;
-    compiler::compile(
-        &pipeline,
+    compile_with_policy(
+        input,
         Target::PostgreSQL,
-        &Schema::loza_v1(Target::PostgreSQL),
+        &serde_json::Value::Null,
+        &serde_json::Value::Null,
+        Schema::loza_v1(Target::PostgreSQL),
+        QueryPolicy::default(),
     )
 }
 
@@ -395,7 +459,10 @@ pub fn validate_query(input: &str) -> Result<(), LqlError> {
         })
 }
 
-/// Compatibility compile entry point.
+/// Compatibility compile entry point using [`QueryPolicy::default()`].
+///
+/// For untrusted input, use [`compile_with_policy`] with an explicit policy
+/// and scope instead.
 pub fn compile(input: &str, target: Target) -> Result<String, LqlError> {
     match target {
         Target::DuckDB => compile_to_duckdb(input),

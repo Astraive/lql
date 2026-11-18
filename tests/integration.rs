@@ -366,7 +366,50 @@ fn typed_timestamp_and_dynamic_parameters_are_preserved() {
 #[test]
 fn last_aggregate_is_reachable() {
     let duckdb = compile_to_duckdb("from events | summarize last(service)").unwrap();
-    assert!(duckdb.contains("LAST_VALUE("));
+    assert!(duckdb.contains("LAST("));
+    assert!(!duckdb.contains("LAST_VALUE("));
+}
+
+#[test]
+fn first_and_last_aggregates_render_as_dialect_aggregates() {
+    // FIRST_VALUE/LAST_VALUE are window functions requiring OVER(); they must
+    // never be emitted for a summarize aggregation on any target.
+    let duckdb_first = compile_to_duckdb("from events | summarize first(service)").unwrap();
+    assert!(
+        duckdb_first.contains("FIRST(q.\"service\")"),
+        "{duckdb_first}"
+    );
+    assert!(!duckdb_first.contains("FIRST_VALUE"), "{duckdb_first}");
+
+    let duckdb_last = compile_to_duckdb("from events | summarize last(service)").unwrap();
+    assert!(duckdb_last.contains("LAST(q.\"service\")"), "{duckdb_last}");
+    assert!(!duckdb_last.contains("LAST_VALUE"), "{duckdb_last}");
+
+    let clickhouse_first = compile_to_clickhouse("from events | summarize first(service)").unwrap();
+    assert!(
+        clickhouse_first.contains("any(q.\"service\")"),
+        "{clickhouse_first}"
+    );
+
+    let clickhouse_last = compile_to_clickhouse("from events | summarize last(service)").unwrap();
+    assert!(
+        clickhouse_last.contains("anyLast(q.\"service\")"),
+        "{clickhouse_last}"
+    );
+
+    let postgres_first = compile_to_postgres("from events | summarize first(service)").unwrap();
+    assert!(
+        postgres_first.contains("(array_agg(q.\"service\"))[1]"),
+        "{postgres_first}"
+    );
+    assert!(!postgres_first.contains("FIRST_VALUE"), "{postgres_first}");
+
+    let postgres_last = compile_to_postgres("from events | summarize last(service)").unwrap();
+    assert!(
+        postgres_last.contains("array_agg(q.\"service\")"),
+        "{postgres_last}"
+    );
+    assert!(!postgres_last.contains("LAST_VALUE"), "{postgres_last}");
 }
 
 #[test]

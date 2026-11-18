@@ -570,7 +570,16 @@ fn validate_policy_expr(expression: &Expr, policy: &QueryPolicy) -> Result<(), D
             validate_policy_expr(low, policy)?;
             validate_policy_expr(high, policy)?;
         }
-        Expr::Column(_) | Expr::Parameter(_) | Expr::Literal(_) | Expr::Wildcard => {}
+        Expr::Wildcard => {
+            if !policy.allowed_fields.is_empty() || !policy.sensitive_fields.is_empty() {
+                return Err(DiagnosticBundle::one(Diagnostic::error(
+                    "LQL123",
+                    "wildcard projection is not allowed when a field policy is configured",
+                    Some(Span::empty(0)),
+                )));
+            }
+        }
+        Expr::Column(_) | Expr::Parameter(_) | Expr::Literal(_) => {}
     }
     Ok(())
 }
@@ -912,5 +921,40 @@ mod policy_tests {
         }))
         .expect_err("unknown policy field must be rejected");
         assert!(error.contains("unknown field"));
+    }
+
+    #[test]
+    fn policy_rejects_wildcard_projection_with_sensitive_fields() {
+        let policy = QueryPolicy::from_value(&serde_json::json!({
+            "allowed_sources": ["events"],
+            "sensitive_fields": ["message"]
+        }))
+        .expect("policy");
+        let mut options = AnalysisOptions::duckdb();
+        options.policy = policy;
+        let error = crate::analyze_source("from events | project *", &options)
+            .expect_err("wildcard projection must not bypass a sensitive-field policy");
+        assert!(error.to_string().contains("wildcard"));
+    }
+
+    #[test]
+    fn policy_rejects_wildcard_projection_with_allowed_fields() {
+        let policy = QueryPolicy::from_value(&serde_json::json!({
+            "allowed_sources": ["events"],
+            "allowed_fields": ["severity"]
+        }))
+        .expect("policy");
+        let mut options = AnalysisOptions::duckdb();
+        options.policy = policy;
+        let error = crate::analyze_source("from events | project *", &options)
+            .expect_err("wildcard projection must not bypass an allowed-fields policy");
+        assert!(error.to_string().contains("wildcard"));
+    }
+
+    #[test]
+    fn wildcard_projection_allowed_without_field_policy() {
+        let options = AnalysisOptions::duckdb();
+        crate::analyze_source("from events | project *", &options)
+            .expect("wildcard projection is allowed when no field policy is configured");
     }
 }

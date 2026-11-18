@@ -674,14 +674,13 @@ pub fn compile_with_policy(
 }
 
 fn inline_parameters(plan: &CompiledQuery) -> String {
-    let mut sql = plan.sql.clone();
-    for (index, parameter) in plan.parameters.iter().enumerate() {
-        let value = match &parameter.value {
+    fn inline_value(target: Target, parameter: &BoundValue) -> String {
+        match &parameter.value {
             Value::String(s) => {
                 // ClickHouse treats backslash as an escape character inside string
                 // literals. Escape backslashes before quotes so a trailing backslash
                 // cannot neutralize a doubled quote and break out of the literal.
-                let escaped = match plan.target {
+                let escaped = match target {
                     Target::ClickHouse => s.replace('\\', "\\\\").replace('\'', "''"),
                     _ => s.replace('\'', "''"),
                 };
@@ -689,20 +688,34 @@ fn inline_parameters(plan: &CompiledQuery) -> String {
             }
             Value::Null => "NULL".to_string(),
             other => other.to_string(),
-        };
-        sql = match plan.target {
-            Target::DuckDB => sql.replacen('?', &value, 1),
-            Target::ClickHouse => {
-                let marker = format!(
-                    "{{p{}:{}}}",
-                    index,
-                    clickhouse_type(&parameter.logical_type)
-                );
-                sql.replace(&marker, &value)
-            }
-            Target::PostgreSQL => sql.replacen(&format!("${}", index + 1), &value, 1),
-        };
+        }
     }
+
+    let mut sql = String::with_capacity(plan.sql.len());
+    let mut rest = plan.sql.as_str();
+
+    for (index, parameter) in plan.parameters.iter().enumerate() {
+        // Each marker is located exactly once, in the original SQL. The inlined
+        // value is appended to `sql` and never becomes search input again, so a
+        // value containing a later marker token cannot consume that binding.
+        let marker = match plan.target {
+            Target::DuckDB => "?".to_string(),
+            Target::ClickHouse => format!(
+                "{{p{}:{}}}",
+                index,
+                clickhouse_type(&parameter.logical_type)
+            ),
+            Target::PostgreSQL => format!("${}", index + 1),
+        };
+        let Some(start) = rest.find(&marker) else {
+            // No matching placeholder remains; keep the rest of the SQL verbatim.
+            break;
+        };
+        sql.push_str(&rest[..start]);
+        sql.push_str(&inline_value(plan.target, parameter));
+        rest = &rest[start + marker.len()..];
+    }
+    sql.push_str(rest);
     sql
 }
 

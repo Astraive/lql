@@ -1,4 +1,5 @@
 use lql_client::{Client, ConnectionConfig, ErrorCategory, QueryValue};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::thread;
@@ -45,6 +46,42 @@ fn query_uses_scoped_route_and_bearer_precedence() {
         )
         .unwrap();
     assert_eq!(result.row_count, 1);
+    server.join().unwrap();
+}
+
+#[test]
+fn oversized_response_is_rejected_without_buffering_the_whole_body() {
+    const LIMIT: usize = 64;
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut buffer = [0_u8; 8192];
+        let _ = stream.read(&mut buffer).unwrap();
+        // Announce a body much larger than the configured limit but send only
+        // LIMIT + 1 bytes before closing. A client that buffers the whole body
+        // sees a truncated body (a transport error); one that bounds its read
+        // stops at LIMIT + 1 bytes and rejects on the size limit instead.
+        let head = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            LIMIT * 8
+        );
+        stream.write_all(head.as_bytes()).unwrap();
+        stream.write_all(&vec![b'x'; LIMIT + 1]).unwrap();
+    });
+    let client = Client::new(ConnectionConfig {
+        endpoint: Some(format!("http://{address}")),
+        collector: Some("demo".into()),
+        max_response_bytes: Some(LIMIT),
+        ..Default::default()
+    })
+    .unwrap();
+    let error = match client.query("from events", HashMap::new(), 10) {
+        Ok(_) => panic!("oversized response must be rejected"),
+        Err(error) => error,
+    };
+    assert_eq!(error.category, ErrorCategory::MalformedResponse);
+    assert!(error.message.contains("exceeds the configured size limit"));
     server.join().unwrap();
 }
 

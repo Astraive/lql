@@ -51,6 +51,23 @@ fn default_target() -> String {
     "duckdb".to_string()
 }
 
+fn parse_target(target: &str) -> Result<Target, ()> {
+    match target.to_ascii_lowercase().as_str() {
+        "duckdb" => Ok(Target::DuckDB),
+        "clickhouse" => Ok(Target::ClickHouse),
+        "postgres" | "postgresql" => Ok(Target::PostgreSQL),
+        _ => Err(()),
+    }
+}
+
+fn analysis_options(target: Target) -> crate::AnalysisOptions {
+    match target {
+        Target::DuckDB => crate::AnalysisOptions::duckdb(),
+        Target::ClickHouse => crate::AnalysisOptions::clickhouse(),
+        Target::PostgreSQL => crate::AnalysisOptions::postgres(),
+    }
+}
+
 pub fn serve_stdio<R: BufRead, W: Write>(reader: R, mut writer: W) -> io::Result<()> {
     for line in reader.lines() {
         let line = line?;
@@ -121,11 +138,9 @@ fn compile(id: Value, params: Value) -> RpcResponse {
         Ok(params) => params,
         Err(error) => return failure(id, "invalid_params", &error.to_string(), None),
     };
-    let target = match params.target.to_ascii_lowercase().as_str() {
-        "duckdb" => Target::DuckDB,
-        "clickhouse" => Target::ClickHouse,
-        "postgres" | "postgresql" => Target::PostgreSQL,
-        _ => return failure(id, "invalid_target", "unsupported target", None),
+    let target = match parse_target(&params.target) {
+        Ok(target) => target,
+        Err(()) => return failure(id, "invalid_target", "unsupported target", None),
     };
     let policy = match QueryPolicy::from_value(&params.policy) {
         Ok(policy) => policy,
@@ -170,7 +185,16 @@ fn check(id: Value, params: Value) -> RpcResponse {
         .get("query")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    match crate::analyze_source(query, &crate::AnalysisOptions::duckdb()) {
+    let target = match parse_target(
+        params
+            .get("target")
+            .and_then(Value::as_str)
+            .unwrap_or("duckdb"),
+    ) {
+        Ok(target) => target,
+        Err(()) => return failure(id, "invalid_target", "unsupported target", None),
+    };
+    match crate::analyze_source(query, &analysis_options(target)) {
         Ok(_) => success(id, json!({ "ok": true })),
         Err(bundle) => failure(id, "check_failed", "LQL check failed", Some(bundle)),
     }
@@ -330,5 +354,37 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("\"audit\""));
+    }
+
+    fn check_response(id: u32, target: &str) -> Value {
+        let input = format!(
+            "{}\n",
+            json!({
+                "id": id, "method": "check", "protocol_version": 1,
+                "language_version": "0.1",
+                "params": {
+                    "query": "from events | where level = \"error\" | take 2",
+                    "target": target
+                }
+            })
+        );
+        let mut output = Vec::new();
+        serve_stdio(Cursor::new(input), &mut output).unwrap();
+        serde_json::from_slice(&output).unwrap()
+    }
+
+    #[test]
+    fn stdio_check_rejects_unknown_target() {
+        let response = check_response(10, "bogus");
+        assert_eq!(response["error"]["code"], "invalid_target");
+    }
+
+    #[test]
+    fn stdio_check_accepts_supported_targets() {
+        for (id, target) in [(11, "duckdb"), (12, "clickhouse"), (13, "postgres")] {
+            let response = check_response(id, target);
+            assert_eq!(response["id"], id);
+            assert_eq!(response["result"]["ok"], true, "target {target} failed");
+        }
     }
 }

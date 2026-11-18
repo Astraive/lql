@@ -141,6 +141,57 @@ fn clickhouse_timeseries() {
 }
 
 #[test]
+fn inline_parameters_duckdb_value_containing_question_mark() {
+    // The '?' inside the first literal is data, not a placeholder. Inlining must
+    // not re-scan the already-substituted value and bind the second parameter
+    // into it, leaving the real second placeholder unbound.
+    let sql = compile_to_duckdb(r#"from events | where message = "what?" and duration_ms > 1000"#)
+        .unwrap();
+    assert!(
+        sql.contains("'what?'"),
+        "first literal must be preserved: {sql}"
+    );
+    assert!(
+        sql.contains("> 1000"),
+        "second parameter must be inlined: {sql}"
+    );
+    assert!(!sql.contains("> ?"), "no placeholder may remain: {sql}");
+}
+
+#[test]
+fn inline_parameters_clickhouse_value_containing_later_marker() {
+    // A literal containing the text of a later ClickHouse marker must survive
+    // verbatim; replacement must happen in a single pass over the original SQL.
+    let sql =
+        compile_to_clickhouse(r#"from events | where message = "{p1:String}" and service = "api""#)
+            .unwrap();
+    assert!(
+        sql.contains("'{p1:String}'"),
+        "marker-like text in the first literal must be preserved: {sql}"
+    );
+    assert!(
+        sql.contains("= 'api'"),
+        "second parameter must be inlined: {sql}"
+    );
+}
+
+#[test]
+fn inline_parameters_postgres_value_containing_later_marker() {
+    // Same hazard for PostgreSQL positional markers: '$2' inside an earlier
+    // value must not consume the binding belonging to the second parameter.
+    let sql =
+        compile_to_postgres(r#"from events | where message = "$2" and service = "api""#).unwrap();
+    assert!(
+        sql.contains("'$2'"),
+        "marker-like text must be preserved: {sql}"
+    );
+    assert!(
+        sql.contains("= 'api'"),
+        "second parameter must be inlined: {sql}"
+    );
+}
+
+#[test]
 fn pipeline_parse_ast() {
     let pipeline = parse(r#"from events | where level = "error" | summarize count() by service | sort count desc | limit 10"#).unwrap();
     assert_eq!(pipeline.statements.len(), 5);

@@ -271,12 +271,36 @@ fn bench_invalid_query(c: &mut Criterion) {
 }
 
 fn bench_large_query(c: &mut Criterion) {
-    // Construct a very large query with many chained where clauses
+    // Construct a very large query with many chained where clauses. Use fields from
+    // the default schema so the benchmark measures successful compilation rather
+    // than the unknown-field validation-error path.
+    let fields = [
+        "event_id",
+        "service",
+        "level",
+        "environment",
+        "region",
+        "host",
+        "request_id",
+        "trace_id",
+        "message",
+        "outcome",
+    ];
     let mut large_where = String::from("from events");
     for i in 0..50 {
-        large_where.push_str(&format!(r#" | where field_{} = "value_{}""#, i % 10, i));
+        large_where.push_str(&format!(
+            r#" | where {} = "value_{}""#,
+            fields[i % fields.len()],
+            i
+        ));
     }
     large_where.push_str(" | summarize count() by service | sort count desc | limit 100");
+
+    // Smoke assertion: the generated query must compile against the default schema.
+    assert!(
+        compile_to_duckdb(&large_where).is_ok(),
+        "50-where-clause benchmark query must compile against the default schema"
+    );
 
     c.bench_function("lexer_50_where_clauses", |b| {
         b.iter(|| {

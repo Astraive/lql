@@ -5,6 +5,33 @@ use lql::{
 };
 
 #[test]
+fn every_catalog_builtin_renders_for_all_targets() {
+    use lql::functions::{Arity, FUNCTION_CATALOG};
+
+    for signature in FUNCTION_CATALOG {
+        let count = match signature.arity {
+            Arity::Exact(n) => n,
+            Arity::Range(min, _) => min,
+            Arity::AtLeast(min) => min,
+        };
+        let query = match signature.name {
+            "ago" => "from events | project ago(1h)".to_string(),
+            "bin" => "from events | project bin(timestamp, 1h)".to_string(),
+            _ => format!(
+                "from events | project {}({})",
+                signature.name,
+                vec!["1"; count].join(", ")
+            ),
+        };
+        for target in [Target::DuckDB, Target::ClickHouse, Target::PostgreSQL] {
+            let plan = render_query(&query, target)
+                .unwrap_or_else(|error| panic!("{} failed for {:?}: {}", query, target, error));
+            assert!(!plan.sql.is_empty(), "empty SQL for {}", query);
+        }
+    }
+}
+
+#[test]
 fn smoke_from_events_limit() {
     let sql = compile_to_duckdb("from events | limit 10").unwrap();
     assert!(sql.contains("LIMIT 10"));

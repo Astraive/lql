@@ -136,6 +136,19 @@ fn prepare_pipeline(
     bind_pipeline(pipeline, parameters)?;
     append_scope_filter(pipeline, scope)?;
     Ok(())
+    bind_pipeline(&mut pipeline, parameters)
+        .map_err(|bundle| relocate_diagnostics(input, bundle))?;
+    append_scope_filter(&mut pipeline, scope)
+        .map_err(|bundle| relocate_diagnostics(input, bundle))?;
+    let options = AnalysisOptions {
+        schema,
+        target,
+        policy,
+        language_version: "0.1".to_string(),
+    };
+    let typed = analyze_pipeline(&pipeline, &options)
+        .map_err(|bundle| relocate_diagnostics(input, bundle))?;
+    compiler::render(&typed, target).map_err(|bundle| relocate_diagnostics(input, bundle))
 }
 
 fn append_scope_filter(
@@ -373,18 +386,33 @@ fn parameter_literal(name: &str, value: &serde_json::Value) -> Result<Expr, Diag
     })
 }
 
+/// Map a semantic diagnostic's placeholder span onto real source bytes.
+///
+/// Diagnostics produced by analysis do not yet carry spans from the AST, so
+/// this resolves the token named in the message against the original query.
+/// Diagnostics that already have a real span are left untouched.
 fn relocate_diagnostics(input: &str, mut bundle: DiagnosticBundle) -> DiagnosticBundle {
     for diagnostic in &mut bundle.diagnostics {
-        if diagnostic.primary_span == Some(Span::empty(0)) {
-            if let Some(start_quote) = diagnostic.message.find('\'') {
-                let rest = &diagnostic.message[start_quote + 1..];
-                if let Some(end_quote) = rest.find('\'') {
-                    let needle = &rest[..end_quote];
-                    if let Some(start) = input.find(needle) {
-                        diagnostic.primary_span = Some(Span::new(start, start + needle.len()));
-                    }
-                }
-            }
+        if diagnostic.primary_span != Some(Span::empty(0)) {
+            continue;
+        }
+        let message = diagnostic.message.as_bytes();
+        let Some(open) = diagnostic.message.find('\'') else {
+            continue;
+        };
+        let Some(close_offset) = diagnostic.message[open + 1..].find('\'') else {
+            continue;
+        };
+        let close = open + 1 + close_offset;
+        // Include a leading `$` so named parameters map to `$name` in source.
+        let needle_start = if open > 0 && message[open - 1] == b'$' {
+            open - 1
+        } else {
+            open + 1
+        };
+        let needle = &diagnostic.message[needle_start..close];
+        if let Some(start) = input.find(needle) {
+            diagnostic.primary_span = Some(Span::new(start, start + needle.len()).clamp_to(input));
         }
     }
     bundle
@@ -465,12 +493,13 @@ pub fn compile_to_postgres(input: &str) -> Result<String, LqlError> {
 pub fn validate_query(input: &str) -> Result<(), LqlError> {
     let pipeline = parse(input)?;
     let options = AnalysisOptions::duckdb();
-    ir::analyze(&pipeline, &options)
-        .map(|_| ())
-        .map_err(|d| LqlError::Compile {
+    ir::analyze(&pipeline, &options).map(|_| ()).map_err(|d| {
+        let d = relocate_diagnostics(input, d);
+        LqlError::Compile {
             message: d.to_string(),
             span: d.diagnostics.first().and_then(|d| d.primary_span),
-        })
+        }
+    })
 }
 
 /// Compatibility compile entry point using [`QueryPolicy::default()`].
@@ -578,5 +607,26 @@ mod tests {
         assert!(fields.contains(&"service".to_string()));
         assert!(fields.contains(&"level".to_string()));
         assert!(fields.contains(&"event_id".to_string()));
+    }
+
+    #[test]
+    fn analysis_diagnostics_carry_real_source_spans() {
+        let input = "from events | project missing_field";
+        let error = analyze_source(input, &AnalysisOptions::duckdb()).unwrap_err();
+        let span = error.diagnostics[0]
+            .primary_span
+            .expect("semantic diagnostic must have a real span");
+        assert_eq!(&input[span.start..span.end], "missing_field");
+    }
+
+    #[test]
+    fn parameter_diagnostics_carry_real_source_spans() {
+        let input = "from events | where event_id = $id";
+        let error = render_query_with_parameters(input, Target::DuckDB, &serde_json::json!({}))
+            .unwrap_err();
+        let span = error.diagnostics[0]
+            .primary_span
+            .expect("parameter diagnostic must have a real span");
+        assert_eq!(&input[span.start..span.end], "$id");
     }
 }

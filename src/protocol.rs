@@ -6,6 +6,11 @@ use std::io::{self, BufRead, Write};
 pub const PROTOCOL_VERSION: u32 = 1;
 pub const LANGUAGE_VERSION: &str = "0.1";
 
+/// Maximum number of bytes in a single stdio JSON-RPC request line, excluding
+/// the trailing newline. Lines longer than this are rejected before parsing so
+/// an untrusted client cannot exhaust process memory with one request.
+pub const MAX_LINE_BYTES: usize = 8 * 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RpcRequest {
     pub id: Value,
@@ -68,27 +73,105 @@ fn analysis_options(target: Target) -> crate::AnalysisOptions {
     }
 }
 
-pub fn serve_stdio<R: BufRead, W: Write>(reader: R, mut writer: W) -> io::Result<()> {
-    for line in reader.lines() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
+/// Outcome of reading one bounded line from the stdio stream.
+enum BoundedLine {
+    /// The underlying reader reached EOF with no remaining bytes.
+    Eof,
+    /// A complete line was read (newline stripped, `\r` parity with `lines()`).
+    Line(Vec<u8>),
+    /// The line exceeded `max` bytes; its remainder was drained through the
+    /// newline so that the next line can still be processed.
+    TooLong,
+}
+
+/// Read a single line while keeping allocation bounded to `max` bytes.
+///
+/// Unlike `BufRead::lines`, this never accumulates an unbounded line into a
+/// `String`. Once the limit is reached, accumulation stops and the rest of the
+/// line is discarded up to (and including) the next newline.
+fn read_line_bounded<R: BufRead>(reader: &mut R, max: usize) -> io::Result<BoundedLine> {
+    let mut buf = Vec::new();
+    let mut too_long = false;
+    loop {
+        let available = reader.fill_buf()?;
+        if available.is_empty() {
+            return if too_long {
+                Ok(BoundedLine::TooLong)
+            } else if buf.is_empty() {
+                Ok(BoundedLine::Eof)
+            } else {
+                Ok(BoundedLine::Line(buf))
+            };
         }
-        let response = match serde_json::from_str::<RpcRequest>(&line) {
-            Ok(request) => handle(request),
-            Err(error) => RpcResponse {
-                id: Value::Null,
-                result: None,
-                error: Some(RpcError {
-                    code: "invalid_request".to_string(),
-                    message: error.to_string(),
-                    diagnostics: None,
-                }),
-            },
-        };
-        serde_json::to_writer(&mut writer, &response)?;
-        writer.write_all(b"\n")?;
-        writer.flush()?;
+        if let Some(pos) = available.iter().position(|&byte| byte == b'\n') {
+            let (chunk, _) = available.split_at(pos);
+            if !too_long && buf.len() + chunk.len() <= max {
+                buf.extend_from_slice(chunk);
+                reader.consume(pos + 1);
+                if buf.last() == Some(&b'\r') {
+                    buf.pop();
+                }
+                return Ok(BoundedLine::Line(buf));
+            }
+            // The line is oversized. Consume through the newline and report it
+            // without ever copying the oversized payload into `buf`.
+            reader.consume(pos + 1);
+            return Ok(BoundedLine::TooLong);
+        }
+        // No newline in the buffered chunk: copy it only while within budget.
+        let len = available.len();
+        if !too_long && buf.len() + len <= max {
+            buf.extend_from_slice(available);
+        } else {
+            too_long = true;
+            buf.clear();
+        }
+        reader.consume(len);
+    }
+}
+
+fn write_response<W: Write>(writer: &mut W, response: &RpcResponse) -> io::Result<()> {
+    serde_json::to_writer(&mut *writer, response)?;
+    writer.write_all(b"\n")?;
+    writer.flush()
+}
+
+pub fn serve_stdio<R: BufRead, W: Write>(reader: R, mut writer: W) -> io::Result<()> {
+    let mut reader = reader;
+    loop {
+        match read_line_bounded(&mut reader, MAX_LINE_BYTES)? {
+            BoundedLine::Eof => break,
+            BoundedLine::TooLong => {
+                write_response(
+                    &mut writer,
+                    &failure(
+                        Value::Null,
+                        "line_too_long",
+                        &format!("request line exceeds {MAX_LINE_BYTES} bytes"),
+                        None,
+                    ),
+                )?;
+            }
+            BoundedLine::Line(bytes) => {
+                let line = String::from_utf8_lossy(&bytes);
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let response = match serde_json::from_str::<RpcRequest>(&line) {
+                    Ok(request) => handle(request),
+                    Err(error) => RpcResponse {
+                        id: Value::Null,
+                        result: None,
+                        error: Some(RpcError {
+                            code: "invalid_request".to_string(),
+                            message: error.to_string(),
+                            diagnostics: None,
+                        }),
+                    },
+                };
+                write_response(&mut writer, &response)?;
+            }
+        }
     }
     Ok(())
 }
@@ -313,6 +396,68 @@ mod tests {
         serve_stdio(Cursor::new(input), &mut output).unwrap();
         let response: Value = serde_json::from_slice(&output).unwrap();
         assert_eq!(response["error"]["code"], "invalid_policy");
+    }
+
+    #[test]
+    fn stdio_rejects_oversized_line_and_keeps_serving() {
+        let oversized = "x".repeat(MAX_LINE_BYTES + 1);
+        let valid = json!({
+            "id": 42, "method": "version", "protocol_version": 1, "language_version": "0.1"
+        });
+        let input = format!("{oversized}\n{valid}\n");
+        let mut output = Vec::new();
+        serve_stdio(Cursor::new(input), &mut output).unwrap();
+
+        let responses: Vec<Value> = output
+            .split(|&byte| byte == b'\n')
+            .filter(|line| !line.is_empty())
+            .map(|line| serde_json::from_slice(line).unwrap())
+            .collect();
+        assert_eq!(
+            responses.len(),
+            2,
+            "expected error response then normal response"
+        );
+        assert_eq!(responses[0]["error"]["code"], "line_too_long");
+        assert!(responses[0]["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("exceeds"));
+        assert_eq!(responses[1]["id"], 42);
+        assert_eq!(
+            responses[1]["result"]["compiler_version"],
+            env!("CARGO_PKG_VERSION")
+        );
+    }
+
+    #[test]
+    fn stdio_rejects_oversized_line_at_eof() {
+        let oversized = "x".repeat(MAX_LINE_BYTES + 1);
+        let mut output = Vec::new();
+        serve_stdio(Cursor::new(oversized), &mut output).unwrap();
+        let response: Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(response["error"]["code"], "line_too_long");
+    }
+
+    #[test]
+    fn stdio_accepts_line_at_the_size_limit() {
+        let base = json!({
+            "id": "", "method": "version", "protocol_version": 1, "language_version": "0.1"
+        });
+        let base_len = serde_json::to_string(&base).unwrap().len();
+        let id = "x".repeat(MAX_LINE_BYTES - base_len);
+        let request = json!({
+            "id": id, "method": "version", "protocol_version": 1, "language_version": "0.1"
+        });
+        let line = serde_json::to_string(&request).unwrap();
+        assert_eq!(line.len(), MAX_LINE_BYTES);
+
+        let mut output = Vec::new();
+        serve_stdio(Cursor::new(format!("{line}\n")), &mut output).unwrap();
+        let response: Value = serde_json::from_slice(&output).unwrap();
+        assert_eq!(response["id"], id);
+        assert!(response["result"].is_object());
+        assert!(response["error"].is_null());
     }
 
     #[test]

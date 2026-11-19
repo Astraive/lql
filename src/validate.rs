@@ -11,7 +11,41 @@ pub fn analyze(
     ir::analyze(pipeline, options)
 }
 
-/// Compatibility validator. New callers should use `analyze` and retain the typed plan.
+/// Validate a pipeline with explicit analysis options (target, policy and
+/// schema), retaining the typed plan and every diagnostic.
+pub fn validate_with_options(
+    pipeline: &Pipeline,
+    options: &AnalysisOptions,
+) -> Result<TypedPipeline, DiagnosticBundle> {
+    analyze(pipeline, options)
+}
+
+/// Validate a pipeline with an explicit target, policy and schema, retaining
+/// the typed plan and every diagnostic. Prefer this over `validate`, which
+/// hardcodes a target and collapses diagnostics to a single error.
+pub fn validate_for_target(
+    pipeline: &Pipeline,
+    target: crate::compiler::Target,
+    policy: QueryPolicy,
+    schema: Schema,
+) -> Result<TypedPipeline, DiagnosticBundle> {
+    validate_with_options(
+        pipeline,
+        &AnalysisOptions {
+            schema,
+            target,
+            policy,
+            language_version: "0.1".to_string(),
+            clock: None,
+        },
+    )
+}
+
+/// Compatibility validator retained for API compatibility.
+///
+/// New callers should use `validate_with_options` / `validate_for_target`, or
+/// the `crate::validate_query_with_options` dry run, so they can supply a
+/// target, policy, parameters and schema and receive the full diagnostic set.
 pub fn validate(pipeline: &Pipeline, schema: &Schema) -> Result<(), LqlError> {
     // The caller supplies the schema, so the schema's declared source is the
     // authority for which sources are allowed. Hardcoding the default policy
@@ -33,6 +67,21 @@ pub fn validate(pipeline: &Pipeline, schema: &Schema) -> Result<(), LqlError> {
             message: bundle.to_string(),
             span: bundle.diagnostics.first().and_then(|d| d.primary_span),
         })
+    validate_with_options(
+        pipeline,
+        &AnalysisOptions {
+            schema: schema.clone(),
+            target: crate::compiler::Target::DuckDB,
+            policy: QueryPolicy::default(),
+            language_version: "0.1".to_string(),
+            clock: None,
+        },
+    )
+    .map(|_| ())
+    .map_err(|bundle| LqlError::Compile {
+        message: bundle.to_string(),
+        span: bundle.diagnostics.first().and_then(|d| d.primary_span),
+    })
 }
 
 #[cfg(test)]

@@ -85,7 +85,7 @@ pub fn render_query_with_context(
         target,
         parameters,
         scope,
-        Schema::loza_v1(target),
+        Schema::default_for(target),
         QueryPolicy::default(),
     )
 }
@@ -476,6 +476,24 @@ pub fn compile_with_policy(
         }
     })?;
     compiler::compile_with_policy(&pipeline, target, &schema, policy)
+/// Compile a query through the same analyze + policy + parameter-binding path
+/// used by `render_query*`, then inline the bind values for the legacy
+/// string-returning API. This is the single path behind the WASM and legacy
+/// compile wrappers, so neither can bypass policy or use a different schema.
+fn compile_compat(input: &str, target: Target) -> Result<String, LqlError> {
+    let plan = render_query_with_options(
+        input,
+        target,
+        &serde_json::Value::Null,
+        &serde_json::Value::Null,
+        Schema::default_for(target),
+        QueryPolicy::default(),
+    )
+    .map_err(|bundle| LqlError::Compile {
+        message: bundle.to_string(),
+        span: bundle.diagnostics.first().and_then(|d| d.primary_span),
+    })?;
+    Ok(compiler::inline_parameters(&plan))
 }
 
 /// Compile a query using the compatibility SQL-only wrapper.
@@ -491,6 +509,7 @@ pub fn compile_to_duckdb(input: &str) -> Result<String, LqlError> {
         Schema::duckdb_default(),
         QueryPolicy::default(),
     )
+    compile_compat(input, Target::DuckDB)
 }
 
 /// Compile a query using the compatibility SQL-only wrapper.
@@ -506,6 +525,7 @@ pub fn compile_to_clickhouse(input: &str) -> Result<String, LqlError> {
         Schema::clickhouse_default(),
         QueryPolicy::default(),
     )
+    compile_compat(input, Target::ClickHouse)
 }
 
 /// Compile a query using the compatibility SQL-only wrapper.
@@ -519,11 +539,37 @@ pub fn compile_to_postgres(input: &str) -> Result<String, LqlError> {
         &serde_json::Value::Null,
         &serde_json::Value::Null,
         Schema::loza_v1(Target::PostgreSQL),
+    compile_compat(input, Target::PostgreSQL)
+}
+
+/// Validate a query with explicit parameters, scope, schema and policy.
+/// This is a dry run of `render_query_with_options` and retains every
+/// diagnostic from the full analysis pipeline.
+pub fn validate_query_with_options(
+    input: &str,
+    target: Target,
+    parameters: &serde_json::Value,
+    scope: &serde_json::Value,
+    schema: Schema,
+    policy: QueryPolicy,
+) -> Result<(), DiagnosticBundle> {
+    render_query_with_options(input, target, parameters, scope, schema, policy).map(|_| ())
+}
+
+/// Validate a query against the canonical DuckDB defaults, retaining all
+/// diagnostics. This is the validation path shared by the WASM binding.
+pub fn validate_query_diagnostics(input: &str) -> Result<(), DiagnosticBundle> {
+    validate_query_with_options(
+        input,
+        Target::DuckDB,
+        &serde_json::Value::Null,
+        &serde_json::Value::Null,
+        Schema::default_for(Target::DuckDB),
         QueryPolicy::default(),
     )
 }
 
-/// Validate a LQL query against the default generated event schema.
+/// Validate a LQL query against the canonical default event schema.
 pub fn validate_query(input: &str) -> Result<(), LqlError> {
     let pipeline = parse(input)?;
     let options = AnalysisOptions::duckdb();
@@ -533,6 +579,9 @@ pub fn validate_query(input: &str) -> Result<(), LqlError> {
             message: d.to_string(),
             span: d.diagnostics.first().and_then(|d| d.primary_span),
         }
+    validate_query_diagnostics(input).map_err(|bundle| LqlError::Compile {
+        message: bundle.to_string(),
+        span: bundle.diagnostics.first().and_then(|d| d.primary_span),
     })
 }
 
@@ -541,16 +590,12 @@ pub fn validate_query(input: &str) -> Result<(), LqlError> {
 /// For untrusted input, use [`compile_with_policy`] with an explicit policy
 /// and scope instead.
 pub fn compile(input: &str, target: Target) -> Result<String, LqlError> {
-    match target {
-        Target::DuckDB => compile_to_duckdb(input),
-        Target::ClickHouse => compile_to_clickhouse(input),
-        Target::PostgreSQL => compile_to_postgres(input),
-    }
+    compile_compat(input, target)
 }
 
 /// Get all known field names for autocomplete.
 pub fn known_fields() -> Vec<String> {
-    let schema = Schema::duckdb_default();
+    let schema = Schema::default_for(Target::DuckDB);
     schema.columns.keys().cloned().collect()
 }
 
@@ -572,7 +617,6 @@ fn structured_error(input: &str, error: LqlError) -> DiagnosticBundle {
 // ── WASM bindings ──────────────────────────────────────────────────────────
 #[cfg(target_arch = "wasm32")]
 mod wasm {
-    use super::{ir, AnalysisOptions};
     use wasm_bindgen::prelude::*;
 
     #[wasm_bindgen]
@@ -585,10 +629,13 @@ mod wasm {
     }
     #[wasm_bindgen]
     pub fn validate(input: &str) -> Result<String, JsValue> {
-        super::parse_diagnostics(input)
-            .and_then(|p| ir::analyze(&p, &AnalysisOptions::duckdb()).map(|_| ()))
+        super::validate_query_diagnostics(input)
             .map(|_| "{}".to_string())
-            .map_err(|e| JsValue::from_str(&e.to_string()))
+            .map_err(|bundle| {
+                let message = serde_json::to_string(&bundle.diagnostics)
+                    .unwrap_or_else(|_| bundle.to_string());
+                JsValue::from_str(&message)
+            })
     }
     #[wasm_bindgen]
     pub fn known_fields() -> String {

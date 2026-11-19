@@ -1,0 +1,40 @@
+name: LQL Workflow Security
+
+on:
+  push:
+    paths:
+      - ".github/workflows/**"
+      - ".github/zizmor.yml"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - ".github/zizmor.yml"
+
+permissions: {}
+
+env:
+  ZIZMOR_VERSION: 1.31.0
+
+jobs:
+  zizmor:
+    name: Audit workflows with zizmor
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Run zizmor
+        # zizmor's `unpinned-uses` and `excessive-permissions` audits enforce
+        # the SHA-pinning and least-privilege requirements for all workflows.
+        uses: zizmorcore/zizmor-action@53290badfa369cb0bf7ad16342cb62c2fa47ac7b # v0.8.0
+        with:
+          inputs: .github/workflows
+          version: ${{ env.ZIZMOR_VERSION }}
+          online-audits: false
+          advanced-security: false
+          annotations: true
+          config: .github/zizmor.yml
+          min-severity: medium

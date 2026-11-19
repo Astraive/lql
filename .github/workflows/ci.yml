@@ -22,6 +22,8 @@ on:
       - ".github/**"
       - "**/*.md"
       - ".gitignore"
+      - "scripts/**"
+      - ".github/workflows/**"
   pull_request:
     paths:
       - "**/*.rs"
@@ -43,6 +45,8 @@ on:
       - ".github/**"
       - "**/*.md"
       - ".gitignore"
+      - "scripts/**"
+      - ".github/workflows/**"
 
 permissions: {}
 
@@ -77,6 +81,8 @@ jobs:
         run: cargo test --all-features
       - name: Test client crate
         run: cargo test --manifest-path clients/rust/Cargo.toml
+      - name: Test publish version-check logic
+        run: bash scripts/test_publish_check.sh
       - name: Clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
       - name: Format

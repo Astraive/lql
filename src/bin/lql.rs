@@ -229,10 +229,14 @@ fn run_shell(args: &[String]) {
             break;
         };
         let command = line.trim();
+        if is_quit_command(command) {
+            break;
+        }
         if pending.is_empty() && command.starts_with('\\') {
             match command.split_once(' ') {
                 Some(("\\connect", dsn)) => {
                     apply_connect(&mut config, dsn);
+                    config = reconnect(&config, dsn);
                     match Client::new(config.clone()) {
                         Ok(next) => {
                             client = next;
@@ -341,6 +345,41 @@ fn write_csv<W: Write>(result: &lql_client::QueryResult, mut out: W) -> io::Resu
         writeln!(out, "{}", line)?;
     }
     Ok(())
+/// Rebuild the connection for a new DSN without discarding credentials or
+/// other settings the user configured at startup.
+fn reconnect(config: &ConnectionConfig, dsn: &str) -> ConnectionConfig {
+    let mut next = config.clone();
+    next.dsn = Some(dsn.trim().to_string());
+    next
+}
+
+fn is_quit_command(command: &str) -> bool {
+    matches!(command, "\\q" | "\\quit" | "\\exit")
+}
+
+/// Quote a single CSV field when it contains a delimiter, quote, or newline,
+/// doubling any embedded quotes as required by RFC 4180.
+fn csv_field(value: &str) -> String {
+    if value.chars().any(|c| matches!(c, ',' | '"' | '\n' | '\r')) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn csv_record(fields: &[String]) -> String {
+    fields
+        .iter()
+        .map(|field| csv_field(field))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn display_value(value: &serde_json::Value) -> String {
+    match value {
+        serde_json::Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
 }
 
 fn print_result(result: &lql_client::QueryResult, format: &str) {
@@ -352,6 +391,19 @@ fn print_result(result: &lql_client::QueryResult, format: &str) {
         "csv" => {
             if let Err(error) = write_csv(result, io::stdout().lock()) {
                 eprintln!("error writing CSV output: {}", error);
+            let header: Vec<String> = result
+                .columns
+                .iter()
+                .map(|column| column.name.clone())
+                .collect();
+            println!("{}", csv_record(&header));
+            for row in &result.rows {
+                let values: Vec<String> = result
+                    .columns
+                    .iter()
+                    .map(|column| row.get(&column.name).map(display_value).unwrap_or_default())
+                    .collect();
+                println!("{}", csv_record(&values));
             }
         }
         _ => {
@@ -467,6 +519,19 @@ mod tests {
             env: Some("old-env".into()),
             service: Some("old-service".into()),
             database_connection: Some("old-database".into()),
+
+    #[test]
+    fn reconnect_only_changes_the_dsn() {
+        let config = ConnectionConfig {
+            dsn: Some("loza://old-host/collector".into()),
+            endpoint: Some("http://old-host:9308".into()),
+            collector: Some("collector".into()),
+            api_key: Some("secret-key".into()),
+            username: Some("user".into()),
+            password: Some("pass".into()),
+            env: Some("staging".into()),
+            service: Some("billing".into()),
+            database_connection: Some("warehouse".into()),
             timeout: Some(std::time::Duration::from_secs(7)),
             max_response_bytes: Some(4096),
         };
@@ -502,6 +567,19 @@ mod tests {
         assert_eq!(config.username, None);
         assert_eq!(config.password, None);
         assert_eq!(config.database_connection.as_deref(), Some("selected"));
+        let next = reconnect(&config, "  loza://new-host/other  ");
+
+        assert_eq!(next.dsn.as_deref(), Some("loza://new-host/other"));
+        assert_eq!(next.endpoint, config.endpoint);
+        assert_eq!(next.collector, config.collector);
+        assert_eq!(next.api_key, config.api_key);
+        assert_eq!(next.username, config.username);
+        assert_eq!(next.password, config.password);
+        assert_eq!(next.env, config.env);
+        assert_eq!(next.service, config.service);
+        assert_eq!(next.database_connection, config.database_connection);
+        assert_eq!(next.timeout, config.timeout);
+        assert_eq!(next.max_response_bytes, config.max_response_bytes);
     }
 
     #[test]
@@ -535,5 +613,27 @@ mod tests {
             String::from_utf8(out).unwrap(),
             "\"last,name\",net\n\"\"\"Doe, John\"\"\",'-5\n"
         );
+        assert_eq!(csv_field("first\nsecond"), "\"first\nsecond\"");
+        assert_eq!(csv_field("first\rsecond"), "\"first\rsecond\"");
+    }
+
+    #[test]
+    fn csv_record_escapes_every_field() {
+        let fields = vec![
+            "id".to_string(),
+            "a,b".to_string(),
+            "line1\nline2".to_string(),
+        ];
+        assert_eq!(csv_record(&fields), "id,\"a,b\",\"line1\nline2\"");
+    }
+
+    #[test]
+    fn quit_aliases_are_recognized() {
+        for command in ["\\q", "\\quit", "\\exit"] {
+            assert!(is_quit_command(command), "{command} should quit");
+        }
+        for command in ["\\help", "\\timing", "\\connect dsn", "select 1;"] {
+            assert!(!is_quit_command(command), "{command} should not quit");
+        }
     }
 }

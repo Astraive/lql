@@ -263,6 +263,8 @@ mod tests {
         let source = "aé\nb";
         let span = Span::empty(1).clamp_to(source);
         assert_eq!(line_column(source, 1), line_column(source, span.start));
+    }
+
     fn floor_char_boundary(source: &str, offset: usize) -> usize {
         let mut offset = offset.min(source.len());
         while !source.is_char_boundary(offset) {

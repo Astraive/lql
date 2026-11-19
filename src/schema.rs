@@ -152,6 +152,7 @@ impl Schema {
                 .ok_or_else(|| "schema field name is required".to_string())?;
             if !is_valid_field_name(name) {
                 return Err(format!("invalid schema field name '{name}'"));
+            }
             if !is_safe_schema_name(name) {
                 return Err(format!("schema field name {name:?} is not allowed"));
             }
@@ -174,6 +175,8 @@ impl Schema {
             if !is_valid_ident(physical_column) {
                 return Err(format!(
                     "invalid physical column '{physical_column}' for schema field '{name}'"
+                ));
+            }
             if !is_safe_schema_name(physical_column) {
                 return Err(format!(
                     "schema field {name:?} has an unsafe physical column name"
@@ -283,29 +286,6 @@ impl Schema {
     /// names are escaped with the shared dialect-aware helpers so that a
     /// client-supplied name can never break out of its SQL literal.
     pub fn column_expr(&self, field: &str, target: crate::compiler::Target) -> String {
-        if let Some((column, storage)) = self.physical_columns.get(field) {
-            if storage == "projection" {
-                return quote_ident(column);
-            }
-            return match target {
-                crate::compiler::Target::DuckDB => {
-                    format!(
-                        "json_extract_string({}, '$.{}')",
-                        column,
-                        escape_sql_string(field)
-                    )
-                }
-                crate::compiler::Target::ClickHouse => {
-                    format!(
-                        "JSONExtractString({}, '{}')",
-                        column,
-                        escape_clickhouse_string(field)
-                    )
-                }
-                crate::compiler::Target::PostgreSQL => {
-                    format!("({}::jsonb ->> '{}')", column, escape_sql_string(field))
-                }
-            };
         use crate::compiler::Target;
         let (column, storage) = self
             .physical_columns
@@ -318,27 +298,6 @@ impl Schema {
         let column = quote_identifier(column, target);
         let field = escape_string_literal(field, target);
         match target {
-            crate::compiler::Target::DuckDB => {
-                format!(
-                    "json_extract_string({}, '$.{}')",
-                    self.raw_column,
-                    escape_sql_string(field)
-                )
-            }
-            crate::compiler::Target::ClickHouse => {
-                format!(
-                    "JSONExtractString({}, '{}')",
-                    self.raw_column,
-                    escape_clickhouse_string(field)
-                )
-            }
-            crate::compiler::Target::PostgreSQL => {
-                format!(
-                    "({}::jsonb ->> '{}')",
-                    self.raw_column,
-                    escape_sql_string(field)
-                )
-            }
             Target::DuckDB => format!("json_extract_string({column}, '$.{field}')"),
             Target::ClickHouse => format!("JSONExtractString({column}, '{field}')"),
             Target::PostgreSQL => format!("({column}::jsonb ->> '{field}')"),
@@ -623,15 +582,15 @@ mod sql_injection_regression_tests {
         let field = r#"x' OR '1'='1"#;
         assert_eq!(
             schema.column_expr(field, crate::compiler::Target::DuckDB),
-            r#"json_extract_string(raw, '$.x'' OR ''1''=''1')"#
+            r#"json_extract_string("raw", '$.x'' OR ''1''=''1')"#
         );
         assert_eq!(
             schema.column_expr(field, crate::compiler::Target::ClickHouse),
-            r"JSONExtractString(raw, 'x\' OR \'1\'=\'1')"
+            r"JSONExtractString(`raw`, 'x\' OR \'1\'=\'1')"
         );
         assert_eq!(
             schema.column_expr(field, crate::compiler::Target::PostgreSQL),
-            r#"(raw::jsonb ->> 'x'' OR ''1''=''1')"#
+            r#"("raw"::jsonb ->> 'x'' OR ''1''=''1')"#
         );
     }
 
@@ -640,7 +599,7 @@ mod sql_injection_regression_tests {
         let schema = Schema::clickhouse_default();
         assert_eq!(
             schema.column_expr(r"a\b", crate::compiler::Target::ClickHouse),
-            r"JSONExtractString(raw, 'a\\b')"
+            r"JSONExtractString(`raw`, 'a\\b')"
         );
     }
 
@@ -650,7 +609,7 @@ mod sql_injection_regression_tests {
         let schema = Schema::from_document(&document, "events").expect("valid dotted field name");
         assert_eq!(
             schema.column_expr("error.code", crate::compiler::Target::DuckDB),
-            "json_extract_string(payload, '$.error.code')"
+            "json_extract_string(\"payload\", '$.error.code')"
         );
     }
 }

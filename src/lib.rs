@@ -119,13 +119,13 @@ pub fn render_query_with_options(
     policy: QueryPolicy,
 ) -> Result<CompiledQuery, DiagnosticBundle> {
     let mut pipeline = parse_diagnostics(input)?;
-    prepare_pipeline(&mut pipeline, parameters, scope, &policy)?;
+    prepare_pipeline(&mut pipeline, parameters, scope, &policy)
+        .map_err(|bundle| relocate_diagnostics(input, bundle))?;
     let options = AnalysisOptions {
         schema,
         target,
         policy,
         language_version: "0.1".to_string(),
-        clock: None,
     };
     let typed = analyze_pipeline(&pipeline, &options)?;
     compiler::render(&typed, target)
@@ -155,27 +155,8 @@ fn prepare_pipeline(
         }
     }
     bind_pipeline(pipeline, parameters)?;
-    append_scope_filter(pipeline, scope)?;
+    apply_scope_filter(pipeline, scope)?;
     Ok(())
-    bind_pipeline(&mut pipeline, parameters)
-        .map_err(|bundle| relocate_diagnostics(input, bundle))?;
-    append_scope_filter(&mut pipeline, scope)
-        .map_err(|bundle| relocate_diagnostics(input, bundle))?;
-    bind_pipeline(&mut pipeline, parameters)?;
-    apply_scope_filter(&mut pipeline, scope)?;
-    let options = AnalysisOptions {
-        schema,
-        target,
-        policy,
-        language_version: "0.1".to_string(),
-    };
-    let typed = analyze_pipeline(&pipeline, &options)
-        .map_err(|bundle| relocate_diagnostics(input, bundle))?;
-    compiler::render(&typed, target).map_err(|bundle| relocate_diagnostics(input, bundle))
-        clock: None,
-    };
-    let typed = analyze_pipeline(&pipeline, &options)?;
-    compiler::render(&typed, target)
 }
 
 /// Apply trusted scope predicates at the source stage of the pipeline.
@@ -228,20 +209,6 @@ fn apply_scope_filter(
         pipeline
             .statements
             .insert(insert_at, Statement::Where(predicate));
-        let source_index = pipeline
-            .statements
-            .iter()
-            .position(|statement| matches!(statement, Statement::From(_)))
-            .ok_or_else(|| {
-                DiagnosticBundle::one(Diagnostic::error(
-                    "LQL100",
-                    "query must start with a source",
-                    Some(Span::empty(0)),
-                ))
-            })?;
-        pipeline
-            .statements
-            .insert(source_index + 1, Statement::Where(predicate));
     }
     Ok(())
 }
@@ -496,6 +463,8 @@ pub fn compile_with_policy(
         }
     })?;
     compiler::compile_with_policy(&pipeline, target, &schema, policy)
+}
+
 /// Compile a query through the same analyze + policy + parameter-binding path
 /// used by `render_query*`, then inline the bind values for the legacy
 /// string-returning API. This is the single path behind the WASM and legacy
@@ -529,14 +498,6 @@ fn compile_compat(input: &str, target: Target) -> Result<String, LqlError> {
 /// [`render_query_with_parameters`]) and pass the returned bind parameters to
 /// your driver instead of inlining them.
 pub fn compile_to_duckdb(input: &str) -> Result<String, LqlError> {
-    compile_with_policy(
-        input,
-        Target::DuckDB,
-        &serde_json::Value::Null,
-        &serde_json::Value::Null,
-        Schema::duckdb_default(),
-        QueryPolicy::default(),
-    )
     compile_compat(input, Target::DuckDB)
 }
 
@@ -553,14 +514,6 @@ pub fn compile_to_duckdb(input: &str) -> Result<String, LqlError> {
 /// untrusted input, use [`render_query`] (or [`render_query_with_parameters`])
 /// and pass the returned bind parameters to your driver instead of inlining.
 pub fn compile_to_clickhouse(input: &str) -> Result<String, LqlError> {
-    compile_with_policy(
-        input,
-        Target::ClickHouse,
-        &serde_json::Value::Null,
-        &serde_json::Value::Null,
-        Schema::clickhouse_default(),
-        QueryPolicy::default(),
-    )
     compile_compat(input, Target::ClickHouse)
 }
 
@@ -577,12 +530,6 @@ pub fn compile_to_clickhouse(input: &str) -> Result<String, LqlError> {
 /// [`render_query_with_parameters`]) and pass the returned bind parameters to
 /// your driver instead of inlining them.
 pub fn compile_to_postgres(input: &str) -> Result<String, LqlError> {
-    compile_with_policy(
-        input,
-        Target::PostgreSQL,
-        &serde_json::Value::Null,
-        &serde_json::Value::Null,
-        Schema::loza_v1(Target::PostgreSQL),
     compile_compat(input, Target::PostgreSQL)
 }
 
@@ -615,14 +562,6 @@ pub fn validate_query_diagnostics(input: &str) -> Result<(), DiagnosticBundle> {
 
 /// Validate a LQL query against the canonical default event schema.
 pub fn validate_query(input: &str) -> Result<(), LqlError> {
-    let pipeline = parse(input)?;
-    let options = AnalysisOptions::duckdb();
-    ir::analyze(&pipeline, &options).map(|_| ()).map_err(|d| {
-        let d = relocate_diagnostics(input, d);
-        LqlError::Compile {
-            message: d.to_string(),
-            span: d.diagnostics.first().and_then(|d| d.primary_span),
-        }
     validate_query_diagnostics(input).map_err(|bundle| LqlError::Compile {
         message: bundle.to_string(),
         span: bundle.diagnostics.first().and_then(|d| d.primary_span),

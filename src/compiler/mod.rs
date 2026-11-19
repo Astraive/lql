@@ -64,9 +64,6 @@ fn render_relation(
             "SELECT * FROM {}",
             quote_identifier(source, ctx.target)
         )),
-        RelationNode::Scan { source, .. } => {
-            Ok(format!("SELECT * FROM {}", quote_ident(source, ctx.target)))
-        }
         RelationNode::Filter {
             input, predicate, ..
         } => {
@@ -85,7 +82,6 @@ fn render_relation(
                 "SELECT q.*, {} AS {} FROM ({}) AS q",
                 render_expr(expr, ctx, "q")?,
                 quote_identifier(name, ctx.target),
-                quote_ident(name, ctx.target),
                 inner
             ))
         }
@@ -262,7 +258,6 @@ fn render_aggregate(
         "{} AS {}",
         function,
         quote_identifier(&agg.alias, ctx.target)
-        quote_ident(&agg.alias, ctx.target)
     ))
 }
 
@@ -276,7 +271,6 @@ fn render_expr(
             "*".to_string()
         } else {
             format!("{}.{}", alias, quote_identifier(name, ctx.target))
-            format!("{}.{}", alias, quote_ident(name, ctx.target))
         }),
         Expr::Parameter(_) => Ok(bind(ctx, ValueType::Dynamic, Value::Null)),
         Expr::Literal(lit) => Ok(render_literal(lit, &expr.field_type, ctx)),
@@ -740,31 +734,15 @@ fn inline_value(value: &BoundValue, target: Target) -> String {
 /// a single left-to-right pass. Values are appended to a fresh buffer and are
 /// therefore never re-scanned, so an inlined value that itself contains a
 /// placeholder token (e.g. `?` or `$1`) cannot corrupt later substitutions.
-fn inline_parameters(plan: &CompiledQuery) -> String {
+pub fn inline_parameters(plan: &CompiledQuery) -> String {
     fn inline_value(target: Target, parameter: &BoundValue) -> String {
         match &parameter.value {
             Value::String(s) => {
-                // ClickHouse treats backslash as an escape character inside string
-                // literals. Escape backslashes before quotes so a trailing backslash
-                // cannot neutralize a doubled quote and break out of the literal.
-                let escaped = match target {
-                    Target::ClickHouse => s.replace('\\', "\\\\").replace('\'', "''"),
-                    _ => s.replace('\'', "''"),
-                };
-                format!("'{}'", escaped)
+                // Use the shared, dialect-aware escaping helper so ClickHouse
+                // backslash/control-character escaping cannot drift from the
+                // renderer's own string-literal rules.
+                format!("'{}'", escape_string_literal(s, target))
             }
-    let mut sql = plan.sql.clone();
-    for (index, parameter) in plan.parameters.iter().enumerate() {
-        let value = match &parameter.value {
-            Value::String(s) => quote_string_literal(s, plan.target),
-/// Render a compiled plan to a single SQL string with bind values inlined.
-/// Shared by the compatibility/wasm compile wrappers so they cannot diverge
-/// from the analyzed, policy-checked plan produced by `render`.
-pub fn inline_parameters(plan: &CompiledQuery) -> String {
-    let mut sql = plan.sql.clone();
-    for (index, parameter) in plan.parameters.iter().enumerate() {
-        let value = match &parameter.value {
-            Value::String(s) => format!("'{}'", s.replace('\'', "''")),
             Value::Null => "NULL".to_string(),
             other => other.to_string(),
         }
@@ -796,68 +774,6 @@ pub fn inline_parameters(plan: &CompiledQuery) -> String {
     }
     sql.push_str(rest);
     sql
-    let chars: Vec<char> = plan.sql.chars().collect();
-    let mut out = String::with_capacity(plan.sql.len());
-    let mut i = 0usize;
-    let mut next_param = 0usize;
-
-    while i < chars.len() {
-        let consumed = match plan.target {
-            Target::DuckDB if chars[i] == '?' => Some(1),
-            Target::PostgreSQL if chars[i] == '$' => {
-                let mut j = i + 1;
-                while j < chars.len() && chars[j].is_ascii_digit() {
-                    j += 1;
-                }
-                if j > i + 1 {
-                    Some(j - i)
-                } else {
-                    None
-                }
-            }
-            Target::ClickHouse if chars[i] == '{' => {
-                // Placeholder shape: {p<digits>:<type>}
-                let mut j = i + 1;
-                if j < chars.len() && chars[j] == 'p' {
-                    j += 1;
-                    let digits_start = j;
-                    while j < chars.len() && chars[j].is_ascii_digit() {
-                        j += 1;
-                    }
-                    if j > digits_start && j < chars.len() && chars[j] == ':' {
-                        while j < chars.len() && chars[j] != '}' {
-                            j += 1;
-                        }
-                        if j < chars.len() && chars[j] == '}' {
-                            Some(j + 1 - i)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-
-        if let Some(len) = consumed {
-            if let Some(parameter) = plan.parameters.get(next_param) {
-                out.push_str(&inline_value(parameter, plan.target));
-                next_param += 1;
-            } else {
-                out.extend(chars[i..i + len].iter());
-            }
-            i += len;
-        } else {
-            out.push(chars[i]);
-            i += 1;
-        }
-    }
-
-    out
 }
 
 fn is_null_expr(expr: &Expr) -> bool {
@@ -903,7 +819,6 @@ mod tests {
                 bound(json!("SENTINEL")),
             ],
             output_schema: Vec::new(),
-            required_capabilities: Vec::new(),
             language_version: "0.1".to_string(),
         };
         assert_eq!(inline_parameters(&plan), "SELECT '?' , '$1' , 'SENTINEL'");

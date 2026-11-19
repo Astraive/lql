@@ -145,6 +145,9 @@ fn cli_uses_canonical_schema_consistent_with_rpc_and_wasm() {
     assert!(output.status.success());
     let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(body["ok"], true);
+}
+
+#[test]
 fn shell_quit_exits_without_running_following_commands() {
     let mut child = Command::new(env!("CARGO_BIN_EXE_lql"))
         .args(["shell", "loza://127.0.0.1:1/events"])
@@ -174,7 +177,13 @@ fn shell_connect_preserves_api_key_across_reconnect() {
     let first = format!("loza://user:pass@127.0.0.1:{port}/first");
     let second = format!("loza://127.0.0.1:{port}/second");
     let mut child = Command::new(env!("CARGO_BIN_EXE_lql"))
-        .args(["shell", &first, "--api-key", "secret-key-123"])
+        .args([
+            "shell",
+            &first,
+            "--api-key-env",
+            "LQL_TEST_API_KEY",
+        ])
+        .env("LQL_TEST_API_KEY", "secret-key-123")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())

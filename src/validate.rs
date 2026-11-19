@@ -36,7 +36,6 @@ pub fn validate_for_target(
             target,
             policy,
             language_version: "0.1".to_string(),
-            clock: None,
         },
     )
 }
@@ -67,21 +66,6 @@ pub fn validate(pipeline: &Pipeline, schema: &Schema) -> Result<(), LqlError> {
             message: bundle.to_string(),
             span: bundle.diagnostics.first().and_then(|d| d.primary_span),
         })
-    validate_with_options(
-        pipeline,
-        &AnalysisOptions {
-            schema: schema.clone(),
-            target: crate::compiler::Target::DuckDB,
-            policy: QueryPolicy::default(),
-            language_version: "0.1".to_string(),
-            clock: None,
-        },
-    )
-    .map(|_| ())
-    .map_err(|bundle| LqlError::Compile {
-        message: bundle.to_string(),
-        span: bundle.diagnostics.first().and_then(|d| d.primary_span),
-    })
 }
 
 #[cfg(test)]

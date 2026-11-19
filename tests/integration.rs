@@ -2,8 +2,6 @@ use lql::{
     compile_to_clickhouse, compile_to_duckdb, compile_to_postgres, compile_with_policy, parse,
     render_query, render_query_with_context, render_query_with_parameters, validate_query,
     QueryPolicy, Schema, Target, ValueType,
-    compile_to_clickhouse, compile_to_duckdb, compile_to_postgres, parse, render_query,
-    render_query_with_context, render_query_with_parameters, validate_query, Target, ValueType,
 };
 
 #[test]
@@ -125,8 +123,8 @@ fn clickhouse_string_literals_escape_backslashes() {
     // consumed as an escaped quote and the trailing text breaks out of the literal.
     let sql = compile_to_clickhouse(r#"from events | where service = "a\\' OR 1=1 --""#).unwrap();
     assert!(
-        sql.contains("'a\\\\'' OR 1=1 --'"),
-        "backslash must be doubled so the payload stays inside the literal: {sql}"
+        sql.contains(r#"'a\\\' OR 1=1 --'"#),
+        "backslash must be doubled and the quote backslash-escaped so the payload stays inside the literal: {sql}"
     );
 }
 
@@ -138,18 +136,18 @@ fn clickhouse_compiler_literal_escapes_backslashes() {
     let sql =
         lql::compiler::clickhouse::compile(&pipeline, &lql::Schema::clickhouse_default()).unwrap();
     assert!(
-        sql.contains("\"service\" = 'a\\\\'' OR 1=1 --'"),
-        "direct compiler must double the backslash: {sql}"
+        sql.contains(r#"q.`service` = 'a\\\' OR 1=1 --'"#),
+        "direct compiler must double the backslash and escape the quote: {sql}"
     );
 }
 
 #[test]
 fn clickhouse_string_literals_escape_single_quotes() {
-    // Doubling of single quotes must remain intact after adding backslash escaping.
+    // ClickHouse escapes embedded single quotes with a backslash.
     let sql = compile_to_clickhouse(r#"from events | where service = "o'brien""#).unwrap();
     assert!(
-        sql.contains("'o''brien'"),
-        "single quotes must still be doubled: {sql}"
+        sql.contains(r"o\'brien"),
+        "single quotes must be backslash-escaped: {sql}"
     );
 }
 
@@ -467,13 +465,13 @@ fn first_and_last_aggregates_render_as_dialect_aggregates() {
 
     let clickhouse_first = compile_to_clickhouse("from events | summarize first(service)").unwrap();
     assert!(
-        clickhouse_first.contains("any(q.\"service\")"),
+        clickhouse_first.contains("any(q.`service`)"),
         "{clickhouse_first}"
     );
 
     let clickhouse_last = compile_to_clickhouse("from events | summarize last(service)").unwrap();
     assert!(
-        clickhouse_last.contains("anyLast(q.\"service\")"),
+        clickhouse_last.contains("anyLast(q.`service`)"),
         "{clickhouse_last}"
     );
 
@@ -805,6 +803,8 @@ fn scope_filter_is_applied_before_column_replacing_transforms() {
         .collect();
     assert!(values.contains(&"edge"), "{values:?}");
     assert!(values.contains(&"prod"), "{values:?}");
+}
+
 // --- LQL-SEC-001: SQL injection regressions for the inlining wrappers -------
 
 #[test]
@@ -845,12 +845,22 @@ fn inlined_question_mark_is_not_resubstituted() {
     // The inlined `?` must not be consumed by the substitution of the second
     // parameter (the legacy sequential replacen corrupted it to ''SENTINEL'').
     let source = r#"from events | where message = "?" and service = "SENTINEL""#;
-    let expected = r#"q."message" = '?'"#;
-    let sentinel = r#"q."service" = 'SENTINEL'"#;
-    for sql in [
-        compile_to_duckdb(source).unwrap(),
-        compile_to_clickhouse(source).unwrap(),
-        compile_to_postgres(source).unwrap(),
+    for (sql, expected, sentinel) in [
+        (
+            compile_to_duckdb(source).unwrap(),
+            r#"q."message" = '?'"#,
+            r#"q."service" = 'SENTINEL'"#,
+        ),
+        (
+            compile_to_clickhouse(source).unwrap(),
+            "q.`message` = '?'",
+            "q.`service` = 'SENTINEL'",
+        ),
+        (
+            compile_to_postgres(source).unwrap(),
+            r#"q."message" = '?'"#,
+            r#"q."service" = 'SENTINEL'"#,
+        ),
     ] {
         assert!(sql.contains(expected), "{sql}");
         assert!(sql.contains(sentinel), "{sql}");
@@ -889,6 +899,8 @@ fn newline_payload_is_escaped_or_preserved_per_dialect() {
     assert!(compile_to_postgres(source)
         .unwrap()
         .contains("q.\"message\" = 'line1\nline2'"));
+}
+
 #[test]
 fn deeply_nested_input_returns_diagnostic_instead_of_crashing() {
     let input = format!(

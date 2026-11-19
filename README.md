@@ -67,6 +67,28 @@ inside the caller's tenant/environment, and the scoped columns need not survive
 aggregation or projection. Scope enforcement therefore cannot be bypassed by
 reshaping the pipeline, and cannot fail just because a projection drops the
 `collector` or `environment` column.
+## Parser recursion limit
+
+Deeply nested parentheses and function calls are bounded by a parser nesting
+budget so that a malicious query returns a diagnostic instead of exhausting the
+stack. The default is `128` nested expressions
+(`lql::DEFAULT_MAX_DEPTH`); exceeding it produces diagnostic `LQL004`
+("expression nesting depth exceeds the configured limit").
+
+The budget is configurable through the library API:
+
+```rust
+use lql::{parse, parse_with_max_depth, DEFAULT_MAX_DEPTH};
+
+let query = r#"from events | where (((level = "error")))"#;
+let pipeline = parse(query)?;                       // uses DEFAULT_MAX_DEPTH
+let pipeline = parse_with_max_depth(query, 64)?;    // custom budget
+```
+
+`lql::parser::Parser::with_max_depth` provides the same control at the token
+level, and `lql::parse_diagnostics_with_max_depth` returns the limit violation
+as a structured diagnostic. All CLI, RPC, and WASM entry points use the safe
+default.
 
 ## Development
 

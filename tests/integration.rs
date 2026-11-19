@@ -889,4 +889,25 @@ fn newline_payload_is_escaped_or_preserved_per_dialect() {
     assert!(compile_to_postgres(source)
         .unwrap()
         .contains("q.\"message\" = 'line1\nline2'"));
+#[test]
+fn deeply_nested_input_returns_diagnostic_instead_of_crashing() {
+    let input = format!(
+        "from events | where {}1{}",
+        "(".repeat(10_000),
+        ")".repeat(10_000)
+    );
+
+    // The public parse API must return an error, not abort the process.
+    assert!(parse(&input).is_err());
+
+    // Structured diagnostics carry a dedicated, actionable code.
+    let bundle = lql::parse_diagnostics(&input).unwrap_err();
+    assert_eq!(bundle.diagnostics.len(), 1);
+    assert_eq!(bundle.diagnostics[0].code, "LQL004");
+    assert!(bundle.diagnostics[0].message.contains("nesting depth"));
+
+    // The nesting budget is configurable through the public API.
+    let shallow = "from events | where (((((1)))))";
+    assert!(lql::parse_with_max_depth(shallow, 3).is_err());
+    assert!(lql::parse_with_max_depth(shallow, 10).is_ok());
 }

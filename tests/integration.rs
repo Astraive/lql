@@ -805,4 +805,88 @@ fn scope_filter_is_applied_before_column_replacing_transforms() {
         .collect();
     assert!(values.contains(&"edge"), "{values:?}");
     assert!(values.contains(&"prod"), "{values:?}");
+// --- LQL-SEC-001: SQL injection regressions for the inlining wrappers -------
+
+#[test]
+fn single_quote_is_escaped_for_all_targets() {
+    let source = r#"from events | where message = "it's""#;
+    // Standard SQL dialects double the quote.
+    assert!(compile_to_duckdb(source).unwrap().contains(r#"'it''s'"#));
+    assert!(compile_to_postgres(source).unwrap().contains(r#"'it''s'"#));
+    // ClickHouse uses backslash escaping inside string literals.
+    assert!(compile_to_clickhouse(source)
+        .unwrap()
+        .contains(r#"'it\'s'"#));
+}
+
+#[test]
+fn clickhouse_escapes_backslash_and_quote_breakout() {
+    // A value ending in a single backslash must not escape the closing quote.
+    let trailing = compile_to_clickhouse(r#"from events | where message = "\\""#).unwrap();
+    assert!(trailing.contains(r#"'\\'"#), "{trailing}");
+
+    // A backslash immediately before a quote is the classic ClickHouse
+    // breakout; both characters must be escaped.
+    let breakout = compile_to_clickhouse(r#"from events | where message = "\'""#).unwrap();
+    assert!(breakout.contains(r#"'\\\''"#), "{breakout}");
+}
+
+#[test]
+fn backslash_is_preserved_for_standard_sql_targets() {
+    // Backslash is not an escape character in DuckDB/PostgreSQL string
+    // literals; only the quote is doubled.
+    let source = r#"from events | where message = "\'""#;
+    assert!(compile_to_duckdb(source).unwrap().contains(r#"'\'''"#));
+    assert!(compile_to_postgres(source).unwrap().contains(r#"'\'''"#));
+}
+
+#[test]
+fn inlined_question_mark_is_not_resubstituted() {
+    // The inlined `?` must not be consumed by the substitution of the second
+    // parameter (the legacy sequential replacen corrupted it to ''SENTINEL'').
+    let source = r#"from events | where message = "?" and service = "SENTINEL""#;
+    let expected = r#"q."message" = '?'"#;
+    let sentinel = r#"q."service" = 'SENTINEL'"#;
+    for sql in [
+        compile_to_duckdb(source).unwrap(),
+        compile_to_clickhouse(source).unwrap(),
+        compile_to_postgres(source).unwrap(),
+    ] {
+        assert!(sql.contains(expected), "{sql}");
+        assert!(sql.contains(sentinel), "{sql}");
+    }
+}
+
+#[test]
+fn inlined_numbered_placeholder_is_not_resubstituted() {
+    // An inlined value containing `$2` must not be re-scanned when the `$2`
+    // bind marker of a later parameter is substituted.
+    let source = r#"from events | where message = "$2" and service = "SENTINEL""#;
+    let expected = r#"q."message" = '$2'"#;
+    let sentinel = r#"q."service" = 'SENTINEL'"#;
+    let pg = compile_to_postgres(source).unwrap();
+    assert!(pg.contains(expected), "{pg}");
+    assert!(pg.contains(sentinel), "{pg}");
+
+    let source = r#"from events | where message = "$1" and service = "SENTINEL""#;
+    let expected = r#"q."message" = '$1'"#;
+    let pg = compile_to_postgres(source).unwrap();
+    assert!(pg.contains(expected), "{pg}");
+    assert!(pg.contains(r#"q."service" = 'SENTINEL'"#), "{pg}");
+}
+
+#[test]
+fn newline_payload_is_escaped_or_preserved_per_dialect() {
+    let source = r#"from events | where message = "line1\nline2""#;
+    // ClickHouse escapes the control character as `\n`.
+    assert!(compile_to_clickhouse(source)
+        .unwrap()
+        .contains(r#"'line1\nline2'"#));
+    // Standard SQL keeps the (harmless, still quoted) literal newline.
+    assert!(compile_to_duckdb(source)
+        .unwrap()
+        .contains("q.\"message\" = 'line1\nline2'"));
+    assert!(compile_to_postgres(source)
+        .unwrap()
+        .contains("q.\"message\" = 'line1\nline2'"));
 }

@@ -9,10 +9,12 @@ use crate::compiler::Target;
 use crate::error::LqlError;
 use crate::ast::*;
 use crate::compiler::Target;
+use crate::compiler::{escape_clickhouse, escape_string_literal};
 use crate::error::LqlError;
 use crate::escape::{escape_string_literal, quote_identifier, quote_string_literal};
 use crate::functions::{duration_to_clickhouse_interval, validate_function_arity};
 use crate::schema::Schema;
+use crate::Target;
 
 /// Compile a parsed LQL pipeline into ClickHouse SQL.
 pub fn compile(pipeline: &Pipeline, schema: &Schema) -> Result<String, LqlError> {
@@ -228,6 +230,13 @@ fn compile_literal(lit: &Literal) -> Result<String, LqlError> {
         Literal::Dynamic(value) => Ok(format!(
             "'{}'",
             value.to_string().replace('\\', "\\\\").replace('\'', "''")
+        Literal::String(s) | Literal::Timestamp(s) => Ok(format!(
+            "'{}'",
+            escape_string_literal(s, Target::ClickHouse)
+        )),
+        Literal::Dynamic(value) => Ok(format!(
+            "'{}'",
+            escape_string_literal(&value.to_string(), Target::ClickHouse)
         )),
         Literal::String(s) | Literal::Timestamp(s) => {
             Ok(quote_string_literal(s, Target::ClickHouse))
@@ -374,6 +383,15 @@ fn compile_function(name: &str, args: &[Expr], schema: &Schema) -> Result<String
             name: name.to_string(),
             span: crate::error::Span::new(0, 0),
         }),
+    }
+}
+
+fn escape_ident(name: &str) -> String {
+    if name == "*" {
+        name.to_string()
+    } else {
+        // ClickHouse uses backslash escaping inside quoted identifiers.
+        format!("\"{}\"", escape_clickhouse(name, '"'))
     }
 }
 

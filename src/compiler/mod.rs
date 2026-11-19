@@ -64,6 +64,9 @@ fn render_relation(
             "SELECT * FROM {}",
             quote_identifier(source, ctx.target)
         )),
+        RelationNode::Scan { source, .. } => {
+            Ok(format!("SELECT * FROM {}", quote_ident(source, ctx.target)))
+        }
         RelationNode::Filter {
             input, predicate, ..
         } => {
@@ -82,6 +85,7 @@ fn render_relation(
                 "SELECT q.*, {} AS {} FROM ({}) AS q",
                 render_expr(expr, ctx, "q")?,
                 quote_identifier(name, ctx.target),
+                quote_ident(name, ctx.target),
                 inner
             ))
         }
@@ -258,6 +262,7 @@ fn render_aggregate(
         "{} AS {}",
         function,
         quote_identifier(&agg.alias, ctx.target)
+        quote_ident(&agg.alias, ctx.target)
     ))
 }
 
@@ -271,6 +276,7 @@ fn render_expr(
             "*".to_string()
         } else {
             format!("{}.{}", alias, quote_identifier(name, ctx.target))
+            format!("{}.{}", alias, quote_ident(name, ctx.target))
         }),
         Expr::Parameter(_) => Ok(bind(ctx, ValueType::Dynamic, Value::Null)),
         Expr::Literal(lit) => Ok(render_literal(lit, &expr.field_type, ctx)),
@@ -636,11 +642,29 @@ fn clickhouse_type(ty: &ValueType) -> &'static str {
         _ => "String",
     }
 }
-fn quote_ident(name: &str) -> String {
+fn quote_ident(name: &str, target: Target) -> String {
     if name == "*" {
-        "*".to_string()
-    } else {
-        format!("\"{}\"", name.replace('"', "\"\""))
+        return "*".to_string();
+    }
+    match target {
+        // ClickHouse treats backslash as an escape character inside quoted
+        // identifiers, so both the backslash and the quote must be escaped.
+        Target::ClickHouse => format!("\"{}\"", escape_clickhouse(name, '"')),
+        Target::DuckDB | Target::PostgreSQL => {
+            format!("\"{}\"", name.replace('"', "\"\""))
+        }
+    }
+}
+
+/// Escape a string value for embedding in a single-quoted SQL literal of the
+/// given dialect. ClickHouse treats backslash as an escape character, so it
+/// requires backslashes (and control characters) to be escaped in addition to
+/// doubling/escaping the quote. DuckDB and PostgreSQL use standard SQL
+/// semantics where only the single quote is special.
+pub(crate) fn escape_string_literal(value: &str, target: Target) -> String {
+    match target {
+        Target::ClickHouse => escape_clickhouse(value, '\''),
+        Target::DuckDB | Target::PostgreSQL => value.replace('\'', "''"),
     }
 }
 
@@ -650,6 +674,25 @@ fn quote_ident(name: &str) -> String {
 /// this function performs no scope binding. Use
 /// [`crate::compile_with_policy`] for untrusted input. New callers should use
 /// parse -> analyze -> render.
+pub(crate) fn escape_clickhouse(value: &str, quote: char) -> String {
+    let mut out = String::with_capacity(value.len());
+    for ch in value.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\0' => out.push_str("\\0"),
+            c if c == quote => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// Compatibility wrapper. New callers should use parse -> analyze -> render.
 pub fn compile(
     pipeline: &crate::ast::Pipeline,
@@ -685,6 +728,18 @@ pub fn compile_with_policy(
     Ok(inline_parameters(&plan))
 }
 
+fn inline_value(value: &BoundValue, target: Target) -> String {
+    match &value.value {
+        Value::String(s) => format!("'{}'", escape_string_literal(s, target)),
+        Value::Null => "NULL".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Substitute bind placeholders with their inlined, dialect-escaped values in
+/// a single left-to-right pass. Values are appended to a fresh buffer and are
+/// therefore never re-scanned, so an inlined value that itself contains a
+/// placeholder token (e.g. `?` or `$1`) cannot corrupt later substitutions.
 fn inline_parameters(plan: &CompiledQuery) -> String {
     fn inline_value(target: Target, parameter: &BoundValue) -> String {
         match &parameter.value {
@@ -741,8 +796,116 @@ pub fn inline_parameters(plan: &CompiledQuery) -> String {
     }
     sql.push_str(rest);
     sql
+    let chars: Vec<char> = plan.sql.chars().collect();
+    let mut out = String::with_capacity(plan.sql.len());
+    let mut i = 0usize;
+    let mut next_param = 0usize;
+
+    while i < chars.len() {
+        let consumed = match plan.target {
+            Target::DuckDB if chars[i] == '?' => Some(1),
+            Target::PostgreSQL if chars[i] == '$' => {
+                let mut j = i + 1;
+                while j < chars.len() && chars[j].is_ascii_digit() {
+                    j += 1;
+                }
+                if j > i + 1 {
+                    Some(j - i)
+                } else {
+                    None
+                }
+            }
+            Target::ClickHouse if chars[i] == '{' => {
+                // Placeholder shape: {p<digits>:<type>}
+                let mut j = i + 1;
+                if j < chars.len() && chars[j] == 'p' {
+                    j += 1;
+                    let digits_start = j;
+                    while j < chars.len() && chars[j].is_ascii_digit() {
+                        j += 1;
+                    }
+                    if j > digits_start && j < chars.len() && chars[j] == ':' {
+                        while j < chars.len() && chars[j] != '}' {
+                            j += 1;
+                        }
+                        if j < chars.len() && chars[j] == '}' {
+                            Some(j + 1 - i)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(len) = consumed {
+            if let Some(parameter) = plan.parameters.get(next_param) {
+                out.push_str(&inline_value(parameter, plan.target));
+                next_param += 1;
+            } else {
+                out.extend(chars[i..i + len].iter());
+            }
+            i += len;
+        } else {
+            out.push(chars[i]);
+            i += 1;
+        }
+    }
+
+    out
 }
 
 fn is_null_expr(expr: &Expr) -> bool {
     matches!(expr, Expr::Literal(Literal::Null))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn string_literal_escaping_is_dialect_aware() {
+        assert_eq!(escape_string_literal("it's", Target::DuckDB), "it''s");
+        assert_eq!(escape_string_literal("it's", Target::PostgreSQL), "it''s");
+        assert_eq!(escape_string_literal("it's", Target::ClickHouse), "it\\'s");
+        assert_eq!(escape_string_literal("\\'", Target::ClickHouse), "\\\\\\'");
+        assert_eq!(
+            escape_string_literal("a\\nb", Target::ClickHouse),
+            "a\\\\nb"
+        );
+        assert_eq!(escape_string_literal("a\nb", Target::ClickHouse), "a\\nb");
+    }
+
+    #[test]
+    fn clickhouse_identifiers_use_backslash_escaping() {
+        assert_eq!(quote_ident("plain", Target::ClickHouse), "\"plain\"");
+        assert_eq!(quote_ident("a\"b", Target::ClickHouse), r#""a\"b""#);
+        assert_eq!(quote_ident("a\"b", Target::DuckDB), "\"a\"\"b\"");
+    }
+
+    #[test]
+    fn inline_parameters_is_single_pass() {
+        let bound = |value: Value| BoundValue {
+            logical_type: ValueType::String,
+            value,
+        };
+        let plan = CompiledQuery {
+            target: Target::DuckDB,
+            sql: "SELECT ? , ? , ?".to_string(),
+            parameters: vec![
+                bound(json!("?")),
+                bound(json!("$1")),
+                bound(json!("SENTINEL")),
+            ],
+            output_schema: Vec::new(),
+            required_capabilities: Vec::new(),
+            language_version: "0.1".to_string(),
+        };
+        assert_eq!(inline_parameters(&plan), "SELECT '?' , '$1' , 'SENTINEL'");
+    }
 }

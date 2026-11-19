@@ -7,6 +7,11 @@
 use crate::ast::Pipeline;
 use crate::compiler::Target;
 use crate::error::LqlError;
+use crate::ast::*;
+use crate::compiler::Target;
+use crate::error::LqlError;
+use crate::escape::{escape_string_literal, quote_identifier, quote_string_literal};
+use crate::functions::{duration_to_clickhouse_interval, validate_function_arity};
 use crate::schema::Schema;
 
 /// Compile a parsed LQL pipeline into ClickHouse SQL.
@@ -64,7 +69,7 @@ pub fn compile(pipeline: &Pipeline, schema: &Schema) -> Result<String, LqlError>
                 select_cols.push(format!(
                     "{} AS {}",
                     compile_expr_with_aliases(expr, schema, &extended_columns)?,
-                    escape_ident(name)
+                    quote_identifier(name, Target::ClickHouse)
                 ));
                 extended_columns.push(name.clone());
             }
@@ -96,7 +101,10 @@ pub fn compile(pipeline: &Pipeline, schema: &Schema) -> Result<String, LqlError>
             select_cols.join(", ")
         ));
     }
-    sql.push_str(&format!(" FROM {}", escape_ident(&table)));
+    sql.push_str(&format!(
+        " FROM {}",
+        quote_identifier(&table, Target::ClickHouse)
+    ));
     if !where_clauses.is_empty() {
         sql.push_str(&format!(" WHERE {}", where_clauses.join(" AND ")));
     }
@@ -127,9 +135,13 @@ fn compile_expr_with_aliases(
     match expr {
         Expr::Column(name) => {
             if schema.has_field(name) || aliases.iter().any(|a| a == name) {
-                Ok(escape_ident(name))
+                Ok(quote_identifier(name, Target::ClickHouse))
             } else {
-                Ok(format!("JSONExtractString(raw, '{}')", name))
+                Ok(format!(
+                    "JSONExtractString({}, '{}')",
+                    quote_identifier(&schema.raw_column, Target::ClickHouse),
+                    escape_string_literal(name, Target::ClickHouse)
+                ))
             }
         }
         Expr::Parameter(_) => Ok("?".to_string()),
@@ -217,6 +229,10 @@ fn compile_literal(lit: &Literal) -> Result<String, LqlError> {
             "'{}'",
             value.to_string().replace('\\', "\\\\").replace('\'', "''")
         )),
+        Literal::String(s) | Literal::Timestamp(s) => {
+            Ok(quote_string_literal(s, Target::ClickHouse))
+        }
+        Literal::Dynamic(value) => Ok(quote_string_literal(&value.to_string(), Target::ClickHouse)),
         Literal::Integer(n) => Ok(n.to_string()),
         Literal::Float(n) => Ok(n.to_string()),
         Literal::Bool(b) => Ok(if *b { "true" } else { "false" }.to_string()),
@@ -274,7 +290,11 @@ fn compile_agg(agg: &AggExpr, schema: &Schema) -> Result<String, LqlError> {
         }
     };
     if let Some(alias) = &agg.alias {
-        Ok(format!("{} AS {}", func_str, escape_ident(alias)))
+        Ok(format!(
+            "{} AS {}",
+            func_str,
+            quote_identifier(alias, Target::ClickHouse)
+        ))
     } else {
         Ok(func_str)
     }
@@ -354,14 +374,6 @@ fn compile_function(name: &str, args: &[Expr], schema: &Schema) -> Result<String
             name: name.to_string(),
             span: crate::error::Span::new(0, 0),
         }),
-    }
-}
-
-fn escape_ident(name: &str) -> String {
-    if name == "*" {
-        name.to_string()
-    } else {
-        format!("\"{}\"", name.replace('"', "\"\""))
     }
 }
 

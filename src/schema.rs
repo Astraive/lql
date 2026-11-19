@@ -1,3 +1,6 @@
+use crate::escape::{
+    escape_string_literal, is_safe_schema_name, quote_identifier, MAX_SCHEMA_FIELDS,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -123,10 +126,20 @@ impl Schema {
             .get("physical")
             .and_then(Value::as_str)
             .ok_or_else(|| format!("source '{source}' physical table is required"))?;
+        if !is_safe_schema_name(table) {
+            return Err(format!(
+                "source '{source}' has an unsafe physical table name"
+            ));
+        }
         let fields = source_document
             .get("fields")
             .and_then(Value::as_array)
             .ok_or_else(|| format!("source '{source}' fields are required"))?;
+        if fields.len() > MAX_SCHEMA_FIELDS {
+            return Err(format!(
+                "source '{source}' has too many fields (limit {MAX_SCHEMA_FIELDS})"
+            ));
+        }
         let mut columns = HashMap::new();
         let mut nullability = HashMap::new();
         let mut sensitivity = HashSet::new();
@@ -139,6 +152,8 @@ impl Schema {
                 .ok_or_else(|| "schema field name is required".to_string())?;
             if !is_valid_field_name(name) {
                 return Err(format!("invalid schema field name '{name}'"));
+            if !is_safe_schema_name(name) {
+                return Err(format!("schema field name {name:?} is not allowed"));
             }
             if columns.contains_key(name) {
                 return Err(format!("duplicate schema field '{name}'"));
@@ -159,6 +174,9 @@ impl Schema {
             if !is_valid_ident(physical_column) {
                 return Err(format!(
                     "invalid physical column '{physical_column}' for schema field '{name}'"
+            if !is_safe_schema_name(physical_column) {
+                return Err(format!(
+                    "schema field {name:?} has an unsafe physical column name"
                 ));
             }
             let storage = physical
@@ -252,9 +270,9 @@ impl Schema {
         self.sensitivity.contains(name)
     }
 
-    /// Get the SQL column name for a field. For DuckDB with raw storage,
-    /// nested fields are extracted via json_extract_string.
-    /// Get the SQL column name for a field. For raw storage, extract from JSON.
+    /// Get the SQL expression for a field. Identifiers are quoted and field
+    /// names are escaped with the shared dialect-aware helpers so that a
+    /// client-supplied name can never break out of its SQL literal.
     pub fn column_expr(&self, field: &str, target: crate::compiler::Target) -> String {
         if let Some((column, storage)) = self.physical_columns.get(field) {
             if storage == "projection" {
@@ -279,7 +297,17 @@ impl Schema {
                     format!("({}::jsonb ->> '{}')", column, escape_sql_string(field))
                 }
             };
+        use crate::compiler::Target;
+        let (column, storage) = self
+            .physical_columns
+            .get(field)
+            .map(|(column, storage)| (column.as_str(), storage.as_str()))
+            .unwrap_or((self.raw_column.as_str(), "raw"));
+        if storage == "projection" {
+            return quote_identifier(column, target);
         }
+        let column = quote_identifier(column, target);
+        let field = escape_string_literal(field, target);
         match target {
             crate::compiler::Target::DuckDB => {
                 format!(
@@ -302,6 +330,9 @@ impl Schema {
                     escape_sql_string(field)
                 )
             }
+            Target::DuckDB => format!("json_extract_string({column}, '$.{field}')"),
+            Target::ClickHouse => format!("JSONExtractString({column}, '{field}')"),
+            Target::PostgreSQL => format!("({column}::jsonb ->> '{field}')"),
         }
     }
 
@@ -379,14 +410,61 @@ mod tests {
     fn column_expr_duckdb() {
         let schema = Schema::duckdb_default();
         let expr = schema.column_expr("service", crate::compiler::Target::DuckDB);
-        assert_eq!(expr, "json_extract_string(raw, '$.service')");
+        assert_eq!(expr, "json_extract_string(\"raw\", '$.service')");
     }
 
     #[test]
     fn column_expr_clickhouse() {
         let schema = Schema::clickhouse_default();
         let expr = schema.column_expr("service", crate::compiler::Target::ClickHouse);
-        assert_eq!(expr, "JSONExtractString(raw, 'service')");
+        assert_eq!(expr, "JSONExtractString(`raw`, 'service')");
+    }
+
+    #[test]
+    fn column_expr_escapes_field_payloads_for_every_dialect() {
+        let schema = Schema::duckdb_default();
+        let payload = "x' OR 1=1 --";
+        assert_eq!(
+            schema.column_expr(payload, crate::compiler::Target::DuckDB),
+            "json_extract_string(\"raw\", '$.x'' OR 1=1 --')"
+        );
+        assert_eq!(
+            schema.column_expr(payload, crate::compiler::Target::ClickHouse),
+            "JSONExtractString(`raw`, 'x\\' OR 1=1 --')"
+        );
+        assert_eq!(
+            schema.column_expr(payload, crate::compiler::Target::PostgreSQL),
+            "(\"raw\"::jsonb ->> 'x'' OR 1=1 --')"
+        );
+    }
+
+    #[test]
+    fn column_expr_quotes_projection_identifiers() {
+        let document = serde_json::json!({
+            "schema_version": "v1",
+            "sources": {
+                "events": {
+                    "physical": "events_rows",
+                    "fields": [{
+                        "name": "service",
+                        "field_type": "string",
+                        "physical": {
+                            "column": "svc_name",
+                            "storage": "projection"
+                        }
+                    }]
+                }
+            }
+        });
+        let schema = Schema::from_document(&document, "events").expect("schema document");
+        assert_eq!(
+            schema.column_expr("service", crate::compiler::Target::DuckDB),
+            "\"svc_name\""
+        );
+        assert_eq!(
+            schema.column_expr("service", crate::compiler::Target::ClickHouse),
+            "`svc_name`"
+        );
     }
 }
 
@@ -421,10 +499,74 @@ mod revisioned_document_tests {
         assert_eq!(schema.table, "audit_rows");
         assert_eq!(
             schema.column_expr("message", crate::compiler::Target::DuckDB),
-            "json_extract_string(payload, '$.message')"
+            "json_extract_string(\"payload\", '$.message')"
         );
         assert!(!schema.nullable("message"));
         assert!(schema.is_sensitive("message"));
+    }
+
+    fn document_with_names(name: &str, column: &str, table: &str) -> serde_json::Value {
+        json!({
+            "schema_version": "v1",
+            "sources": {
+                "events": {
+                    "physical": table,
+                    "fields": [{
+                        "name": name,
+                        "field_type": "string",
+                        "physical": {
+                            "column": column,
+                            "storage": "projection"
+                        }
+                    }]
+                }
+            }
+        })
+    }
+
+    #[test]
+    fn malicious_schema_names_are_rejected() {
+        for payload in ["a'b", "a;b", "a\\b", "a\"b", "a) --", ""] {
+            let document = document_with_names(payload, "raw", "events_rows");
+            assert!(
+                Schema::from_document(&document, "events").is_err(),
+                "field name {payload:?} should be rejected"
+            );
+
+            let document = document_with_names("message", payload, "events_rows");
+            assert!(
+                Schema::from_document(&document, "events").is_err(),
+                "physical column {payload:?} should be rejected"
+            );
+
+            let document = document_with_names("message", "raw", payload);
+            assert!(
+                Schema::from_document(&document, "events").is_err(),
+                "table name {payload:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn oversized_schema_documents_are_rejected() {
+        let too_long = "a".repeat(crate::escape::MAX_SCHEMA_NAME_LEN + 1);
+        let document = document_with_names(&too_long, "raw", "events_rows");
+        assert!(Schema::from_document(&document, "events").is_err());
+
+        let fields = (0..=crate::escape::MAX_SCHEMA_FIELDS)
+            .map(|i| {
+                json!({
+                    "name": format!("field_{i}"),
+                    "field_type": "string",
+                    "physical": { "column": "raw", "storage": "raw" }
+                })
+            })
+            .collect::<Vec<_>>();
+        let document = json!({
+            "schema_version": "v1",
+            "sources": { "events": { "physical": "events_rows", "fields": fields } }
+        });
+        assert!(Schema::from_document(&document, "events").is_err());
     }
 }
 

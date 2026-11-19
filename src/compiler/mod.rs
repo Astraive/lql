@@ -3,6 +3,7 @@ pub mod duckdb;
 
 use crate::ast::{AggFunction, BinOp, Expr, Literal, UnaryOp};
 use crate::error::{Diagnostic, DiagnosticBundle, Span};
+use crate::escape::{quote_identifier, quote_string_literal};
 use crate::functions::{is_builtin_function, validate_function_arity};
 use crate::ir::{RelationNode, TypedAggregation, TypedColumn, TypedExpr, TypedPipeline, ValueType};
 use serde::{Deserialize, Serialize};
@@ -59,7 +60,10 @@ fn render_relation(
     ctx: &mut RenderContext,
 ) -> Result<String, DiagnosticBundle> {
     match node {
-        RelationNode::Scan { source, .. } => Ok(format!("SELECT * FROM {}", quote_ident(source))),
+        RelationNode::Scan { source, .. } => Ok(format!(
+            "SELECT * FROM {}",
+            quote_identifier(source, ctx.target)
+        )),
         RelationNode::Filter {
             input, predicate, ..
         } => {
@@ -77,7 +81,7 @@ fn render_relation(
             Ok(format!(
                 "SELECT q.*, {} AS {} FROM ({}) AS q",
                 render_expr(expr, ctx, "q")?,
-                quote_ident(name),
+                quote_identifier(name, ctx.target),
                 inner
             ))
         }
@@ -250,7 +254,11 @@ fn render_aggregate(
             )))
         }
     };
-    Ok(format!("{} AS {}", function, quote_ident(&agg.alias)))
+    Ok(format!(
+        "{} AS {}",
+        function,
+        quote_identifier(&agg.alias, ctx.target)
+    ))
 }
 
 fn render_expr(
@@ -262,7 +270,7 @@ fn render_expr(
         Expr::Column(name) => Ok(if name == "*" {
             "*".to_string()
         } else {
-            format!("{}.{}", alias, quote_ident(name))
+            format!("{}.{}", alias, quote_identifier(name, ctx.target))
         }),
         Expr::Parameter(_) => Ok(bind(ctx, ValueType::Dynamic, Value::Null)),
         Expr::Literal(lit) => Ok(render_literal(lit, &expr.field_type, ctx)),
@@ -642,6 +650,7 @@ fn quote_ident(name: &str) -> String {
 /// this function performs no scope binding. Use
 /// [`crate::compile_with_policy`] for untrusted input. New callers should use
 /// parse -> analyze -> render.
+/// Compatibility wrapper. New callers should use parse -> analyze -> render.
 pub fn compile(
     pipeline: &crate::ast::Pipeline,
     target: Target,
@@ -689,6 +698,10 @@ fn inline_parameters(plan: &CompiledQuery) -> String {
                 };
                 format!("'{}'", escaped)
             }
+    let mut sql = plan.sql.clone();
+    for (index, parameter) in plan.parameters.iter().enumerate() {
+        let value = match &parameter.value {
+            Value::String(s) => quote_string_literal(s, plan.target),
             Value::Null => "NULL".to_string(),
             other => other.to_string(),
         }

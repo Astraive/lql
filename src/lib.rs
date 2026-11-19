@@ -6,6 +6,7 @@
 pub mod ast;
 pub mod compiler;
 pub mod error;
+pub mod escape;
 pub mod functions;
 pub mod ir;
 pub mod lexer;

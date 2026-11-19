@@ -141,6 +141,8 @@ fn prepare_pipeline(
         .map_err(|bundle| relocate_diagnostics(input, bundle))?;
     append_scope_filter(&mut pipeline, scope)
         .map_err(|bundle| relocate_diagnostics(input, bundle))?;
+    bind_pipeline(&mut pipeline, parameters)?;
+    apply_scope_filter(&mut pipeline, scope)?;
     let options = AnalysisOptions {
         schema,
         target,
@@ -150,9 +152,26 @@ fn prepare_pipeline(
     let typed = analyze_pipeline(&pipeline, &options)
         .map_err(|bundle| relocate_diagnostics(input, bundle))?;
     compiler::render(&typed, target).map_err(|bundle| relocate_diagnostics(input, bundle))
+        clock: None,
+    };
+    let typed = analyze_pipeline(&pipeline, &options)?;
+    compiler::render(&typed, target)
 }
 
-fn append_scope_filter(
+/// Apply trusted scope predicates at the source stage of the pipeline.
+///
+/// The filter is inserted immediately after the `from` source, before any
+/// `where`, `summarize`, `project`, `sort` or other transformation. This
+/// guarantees the predicates always run against the raw source columns
+/// (`collector` and `environment`), which:
+/// - keeps scoping effective for every pipeline shape, and
+/// - avoids analysis failures when those columns are removed or renamed by a
+///   later projection or aggregation.
+///
+/// Appending the filter after aggregation/projection (the previous behavior)
+/// could either fail closed or silently apply tenant scope to the wrong
+/// relation.
+fn apply_scope_filter(
     pipeline: &mut Pipeline,
     scope: &serde_json::Value,
 ) -> Result<(), DiagnosticBundle> {
@@ -189,6 +208,20 @@ fn append_scope_filter(
         pipeline
             .statements
             .insert(insert_at, Statement::Where(predicate));
+        let source_index = pipeline
+            .statements
+            .iter()
+            .position(|statement| matches!(statement, Statement::From(_)))
+            .ok_or_else(|| {
+                DiagnosticBundle::one(Diagnostic::error(
+                    "LQL100",
+                    "query must start with a source",
+                    Some(Span::empty(0)),
+                ))
+            })?;
+        pipeline
+            .statements
+            .insert(source_index + 1, Statement::Where(predicate));
     }
     Ok(())
 }

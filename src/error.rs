@@ -222,6 +222,10 @@ pub fn line_column(source: &str, byte_offset: usize) -> (usize, usize) {
     while offset > 0 && !source.is_char_boundary(offset) {
         offset -= 1;
     }
+    // Clamp to a valid UTF-8 char boundary before slicing: a caller-supplied
+    // offset may land in the middle of a multi-byte character, which would
+    // otherwise panic on `&source[..offset]`.
+    let offset = Span::empty(byte_offset).clamp_to(source).start;
     let before = &source[..offset];
     let line = before.bytes().filter(|b| *b == b'\n').count() + 1;
     let column = before
@@ -259,5 +263,76 @@ mod tests {
         let source = "aé\nb";
         let span = Span::empty(1).clamp_to(source);
         assert_eq!(line_column(source, 1), line_column(source, span.start));
+    fn floor_char_boundary(source: &str, offset: usize) -> usize {
+        let mut offset = offset.min(source.len());
+        while !source.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        offset
+    }
+
+    #[test]
+    fn line_column_never_panics_at_any_byte_offset() {
+        let sources = [
+            "",
+            "ascii only",
+            "é",
+            "€",
+            "日",
+            "💡",
+            "aé\n日本💡z",
+            "é中😀\n🎉e\u{0301}",
+        ];
+        for source in sources {
+            for offset in 0..=source.len() {
+                // Must not panic even for offsets inside a multi-byte char.
+                let _ = line_column(source, offset);
+            }
+        }
+    }
+
+    #[test]
+    fn line_column_snaps_offsets_to_char_boundaries() {
+        let source = "aé\n日本💡z";
+        for offset in 0..=source.len() {
+            let boundary = floor_char_boundary(source, offset);
+            assert_eq!(
+                line_column(source, offset),
+                line_column(source, boundary),
+                "offset {offset} should behave like char boundary {boundary}"
+            );
+        }
+    }
+
+    #[test]
+    fn line_column_reports_expected_line_and_column_for_multibyte_input() {
+        // Boundaries: 0 'a', 1 'é', 3 '\n', 4 '日', 7 '本', 10 '💡', 14 'z', 15 end.
+        let source = "aé\n日本💡z";
+        assert_eq!(line_column(source, 0), (1, 1));
+        assert_eq!(line_column(source, 1), (1, 2));
+        assert_eq!(line_column(source, 3), (1, 3));
+        assert_eq!(line_column(source, 4), (2, 1));
+        assert_eq!(line_column(source, 7), (2, 2));
+        assert_eq!(line_column(source, 10), (2, 3));
+        assert_eq!(line_column(source, 14), (2, 4));
+        assert_eq!(line_column(source, 15), (2, 5));
+        // Mid-character offsets fall back to the start of that character.
+        assert_eq!(line_column(source, 2), line_column(source, 1));
+        assert_eq!(line_column(source, 5), line_column(source, 4));
+        assert_eq!(line_column(source, 6), line_column(source, 4));
+        assert_eq!(line_column(source, 8), line_column(source, 7));
+        assert_eq!(line_column(source, 9), line_column(source, 7));
+        assert_eq!(line_column(source, 11), line_column(source, 10));
+        assert_eq!(line_column(source, 12), line_column(source, 10));
+        assert_eq!(line_column(source, 13), line_column(source, 10));
+    }
+
+    #[test]
+    fn line_column_clamps_offsets_past_end() {
+        let source = "é日💡";
+        assert_eq!(
+            line_column(source, usize::MAX),
+            line_column(source, source.len())
+        );
     }
 }

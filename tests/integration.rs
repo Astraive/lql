@@ -97,6 +97,24 @@ fn project_specific_fields() {
 }
 
 #[test]
+fn extend_replaces_existing_columns_and_keeps_new_columns_downstream() {
+    let replacement = compile_to_duckdb(
+        r#"from events | extend service = "replacement" | where service = "replacement" | project service"#,
+    )
+    .unwrap();
+    assert!(replacement.contains("'replacement' AS \"service\""));
+    assert!(replacement.contains("WHERE q.\"service\" = 'replacement'"));
+    assert!(!replacement.contains("SELECT q.*,"));
+
+    let added = compile_to_duckdb(
+        r#"from events | extend region = "west" | project service, region"#,
+    )
+    .unwrap();
+    assert!(added.contains("q.\"service\" AS \"service\""));
+    assert!(added.contains("'west' AS \"region\""));
+}
+
+#[test]
 fn timeseries_5m() {
     let sql = compile_to_duckdb("from events | timeseries 5m").unwrap();
     assert!(sql.contains("time_bucket((5 * INTERVAL '1 minute')"));

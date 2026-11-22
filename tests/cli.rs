@@ -123,6 +123,18 @@ fn invalid_json_query_returns_structured_diagnostics() {
 }
 
 #[test]
+fn successful_json_check_returns_json_success_envelope() {
+    let output = run(&["check", "--json", "from events | take 1"]);
+    assert!(output.status.success());
+    let body: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(body, serde_json::json!({"ok": true, "valid": true}));
+
+    let output = run(&["check", "from events | take 1"]);
+    assert!(output.status.success());
+    assert_eq!(output.stdout, b"ok\n");
+}
+
+#[test]
 fn cli_uses_canonical_schema_consistent_with_rpc_and_wasm() {
     // `host` exists only in the legacy `duckdb_default` schema, so every entry
     // point must now reject it. CLI `compile` goes through `render_query`.

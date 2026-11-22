@@ -78,6 +78,7 @@ fn run_offline(command: &str, command_args: &[String], json_output: bool) {
             }
         }
         "check" => match lql::analyze_source(&input, &lql::AnalysisOptions::duckdb()) {
+            Ok(_) if json_output => println!("{}", json!({"ok": true, "valid": true})),
             Ok(_) => println!("ok"),
             Err(bundle) => emit_diagnostics(json_output, &bundle, &input),
         },

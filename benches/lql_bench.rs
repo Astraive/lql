@@ -271,16 +271,12 @@ fn bench_invalid_query(c: &mut Criterion) {
 }
 
 fn bench_large_query(c: &mut Criterion) {
-    // Construct a very large query with many chained where clauses. Use fields from
-    // the default schema so the benchmark measures successful compilation rather
-    // than the unknown-field validation-error path.
+    // Construct a very large query with fields from the canonical compile schema.
     let fields = [
         "event_id",
         "service",
         "level",
         "environment",
-        "region",
-        "host",
         "request_id",
         "trace_id",
         "message",

@@ -97,6 +97,18 @@ fn project_specific_fields() {
 }
 
 #[test]
+fn projected_expression_name_survives_following_stages() {
+    let plan = render_query(
+        "from events | project strlen(service) | sort strlen | where strlen > 3 | project strlen",
+        Target::DuckDB,
+    )
+    .unwrap();
+    assert!(plan.sql.contains("AS \"strlen\""));
+    assert!(plan.sql.contains("q.\"strlen\""));
+    assert_eq!(plan.output_schema[0].name, "strlen");
+}
+
+#[test]
 fn timeseries_5m() {
     let sql = compile_to_duckdb("from events | timeseries 5m").unwrap();
     assert!(sql.contains("time_bucket((5 * INTERVAL '1 minute')"));

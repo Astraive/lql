@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Fix parameterized time-bucket grouping by grouping on the selected output ordinal.
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

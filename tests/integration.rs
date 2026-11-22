@@ -105,6 +105,23 @@ fn timeseries_5m() {
 }
 
 #[test]
+fn parameterized_bucket_grouping_reuses_selected_expressions() {
+    let timeseries = render_query("from events | timeseries 5m", Target::DuckDB).unwrap();
+    assert!(timeseries.sql.contains("GROUP BY 1"));
+    assert_eq!(timeseries.parameters.len(), 1);
+    assert_eq!(timeseries.parameters[0].value, serde_json::json!(5));
+
+    let bin = render_query(
+        "from events | summarize count() by bin(timestamp, 5m)",
+        Target::DuckDB,
+    )
+    .unwrap();
+    assert!(bin.sql.contains("GROUP BY 1"));
+    assert_eq!(bin.parameters.len(), 1);
+    assert_eq!(bin.parameters[0].value, serde_json::json!(5));
+}
+
+#[test]
 fn clickhouse_output() {
     let sql = compile_to_clickhouse(r#"from events | where level = "error" | limit 5"#).unwrap();
     assert!(sql.contains("LIMIT 5"));

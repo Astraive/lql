@@ -60,10 +60,34 @@ fn render_relation(
     ctx: &mut RenderContext,
 ) -> Result<String, DiagnosticBundle> {
     match node {
-        RelationNode::Scan { source, .. } => Ok(format!(
-            "SELECT * FROM {}",
-            quote_identifier(source, ctx.target)
-        )),
+        RelationNode::Scan {
+            source,
+            columns,
+            physical_columns,
+        } => {
+            let table = quote_identifier(source, ctx.target);
+            if physical_columns.iter().any(|(logical, physical)| logical != physical) {
+                let values = columns
+                    .iter()
+                    .map(|column| {
+                        let physical = physical_columns
+                            .iter()
+                            .find(|(logical, _)| logical == &column.name)
+                            .map(|(_, physical)| physical.as_str())
+                            .unwrap_or(&column.name);
+                        format!(
+                            "{}.{} AS {}",
+                            table,
+                            quote_identifier(physical, ctx.target),
+                            quote_identifier(&column.name, ctx.target)
+                        )
+                    })
+                    .collect::<Vec<_>>();
+                Ok(format!("SELECT {} FROM {}", values.join(", "), table))
+            } else {
+                Ok(format!("SELECT * FROM {}", table))
+            }
+        }
         RelationNode::Filter {
             input, predicate, ..
         } => {

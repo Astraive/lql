@@ -491,6 +491,33 @@ fn first_and_last_aggregates_render_as_dialect_aggregates() {
 }
 
 #[test]
+fn first_and_last_aggregates_preserve_argument_types_in_output_schema() {
+    let plan = render_query(
+        "from events | summarize first(service), last(service), first(duration_ms), last(duration_ms)",
+        Target::DuckDB,
+    )
+    .unwrap();
+
+    assert_eq!(
+        plan.output_schema
+            .iter()
+            .map(|column| column.field_type.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            ValueType::String,
+            ValueType::String,
+            ValueType::Float,
+            ValueType::Float
+        ]
+    );
+    assert!(plan.output_schema.iter().all(|column| column.nullable));
+    assert!(plan.sql.contains("FIRST(q.\"service\")"));
+    assert!(plan.sql.contains("LAST(q.\"service\")"));
+    assert!(plan.sql.contains("FIRST(q.\"duration_ms\")"));
+    assert!(plan.sql.contains("LAST(q.\"duration_ms\")"));
+}
+
+#[test]
 fn log_has_natural_logarithm_semantics_on_both_targets() {
     let duckdb = compile_to_duckdb("from events | project log(duration_ms)").unwrap();
     assert!(duckdb.contains("LN("));

@@ -76,8 +76,34 @@ fn summarize_avg() {
 
 #[test]
 fn summarize_percentile() {
-    let sql = compile_to_duckdb("from events | summarize p95(duration_ms)").unwrap();
-    assert!(sql.contains("quantile_cont"));
+    let plan = render_query("from events | summarize p95(duration_ms)", Target::DuckDB).unwrap();
+    assert!(plan.sql.contains("quantile_cont(q.\"duration_ms\", ?)"));
+    assert_eq!(plan.parameters[0].value, serde_json::json!(0.95));
+}
+
+#[test]
+fn duckdb_percentiles_render_value_before_quantile() {
+    for (query, percentile) in [
+        ("p50(duration_ms)", 0.5),
+        ("p95(duration_ms)", 0.95),
+        ("p99(duration_ms)", 0.99),
+        ("percentile(duration_ms, 75)", 0.75),
+    ] {
+        let plan = render_query(
+            &format!("from events | summarize {query}"),
+            Target::DuckDB,
+        )
+        .unwrap();
+        assert!(
+            plan.sql.contains("quantile_cont(q.\"duration_ms\", ?)"),
+            "{query}: {}",
+            plan.sql
+        );
+        assert_eq!(plan.parameters[0].value, serde_json::json!(percentile));
+    }
+    assert!(compile_to_clickhouse("from events | summarize p95(duration_ms)")
+        .unwrap()
+        .contains("quantile(0.95)(q.\"duration_ms\")"));
 }
 
 #[test]

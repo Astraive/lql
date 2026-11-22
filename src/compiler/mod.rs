@@ -238,7 +238,7 @@ fn render_aggregate(
             };
             let placeholder = bind(ctx, ValueType::Float, json!(pct));
             match ctx.target {
-                Target::DuckDB => format!("quantile_cont({}, {})", placeholder, value),
+                Target::DuckDB => format!("quantile_cont({}, {})", value, placeholder),
                 Target::ClickHouse => format!("quantile({})({})", placeholder, value),
                 Target::PostgreSQL => format!(
                     "percentile_cont({}) WITHIN GROUP (ORDER BY {})",

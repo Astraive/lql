@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Give unaliased nonstandard aggregates function-specific output names to avoid collisions.
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

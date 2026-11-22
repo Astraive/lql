@@ -334,10 +334,7 @@ fn write_csv<W: Write>(result: &lql_client::QueryResult, mut out: W) -> io::Resu
             .columns
             .iter()
             .map(|column| {
-                let value = row
-                    .get(&column.name)
-                    .map(display_value)
-                    .unwrap_or_default();
+                let value = row.get(&column.name).map(display_value).unwrap_or_default();
                 csv_field(&value)
             })
             .collect::<Vec<_>>()

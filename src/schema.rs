@@ -325,23 +325,6 @@ fn parse_field_type(name: &str) -> Result<FieldType, String> {
     }
 }
 
-fn quote_ident(value: &str) -> String {
-    format!("\"{}\"", value.replace('"', "\"\""))
-}
-
-/// Escape a value for inclusion in a standard SQL single-quoted string
-/// literal. Doubling single quotes works for DuckDB and PostgreSQL, where a
-/// backslash is an ordinary character in a standard string literal.
-fn escape_sql_string(value: &str) -> String {
-    value.replace('\'', "''")
-}
-
-/// ClickHouse string literals use backslash escape sequences, so both
-/// backslashes and single quotes must be escaped.
-fn escape_clickhouse_string(value: &str) -> String {
-    value.replace('\\', "\\\\").replace('\'', "\\'")
-}
-
 /// Strict SQL identifier: an ASCII letter or underscore followed by ASCII
 /// letters, digits, or underscores. Rejects quotes, backslashes, whitespace
 /// and anything else that could alter generated SQL.

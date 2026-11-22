@@ -44,7 +44,25 @@ class LogicalTypeTests(unittest.TestCase):
         schema = {"oneOf": [{"type": "string"}, {}]}
         with self.assertRaises(ValueError):
             _logical_type(schema)
+    def test_duplicate_logical_projection_is_rejected(self):
+        import json
+        import tempfile
 
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            schema_dir = root / "schemas" / "json"
+            schema_dir.mkdir(parents=True)
+            (schema_dir / "event.schema.json").write_text(
+                json.dumps({"properties": {"service": {"type": "string"}}}),
+                encoding="utf-8",
+            )
+            defaults = root / "defaults.yaml"
+            defaults.write_text(
+                "duckdb:\n  schema:\n    first_service: service\n    second_service: service\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "first_service.*second_service.*service"):
+                generate_loza_schema.generate(root, defaults)
 
 if __name__ == "__main__":
     unittest.main()

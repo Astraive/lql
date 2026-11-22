@@ -96,6 +96,11 @@ def generate(loza_spec: Path, defaults_path: Path) -> dict[str, Any]:
     for physical_name, logical_path in physical["projections"].items():
         if not isinstance(logical_path, str) or logical_path not in field_names:
             raise ValueError(f"Collector projection {physical_name!r} does not map to a canonical event field")
+        if logical_path in projections:
+            previous = projections[logical_path]["column"]
+            raise ValueError(
+                f"Collector columns {previous!r} and {physical_name!r} both map to logical field {logical_path!r}"
+            )
         projections[logical_path] = {
             "column": physical_name,
             "type": physical["column_types"].get(physical_name, "VARCHAR"),

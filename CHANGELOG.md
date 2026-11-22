@@ -1,6 +1,10 @@
 # Changelog
 
 ## [0.5.1] - 2026-08-27
+### Fixed
+
+- Make CLI help/version flags succeed and align the container default command.
+
 
 ### Changed
 

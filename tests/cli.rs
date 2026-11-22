@@ -232,3 +232,30 @@ fn query_csv_quotes_and_escapes_fields() {
         "CSV must quote commas and double embedded quotes/newlines: {stdout:?}"
     );
 }
+
+#[test]
+fn cli_help_and_version_flags_succeed() {
+    for flag in ["--help", "-h"] {
+        let output = run(&[flag]);
+        assert!(output.status.success(), "{flag}: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(String::from_utf8_lossy(&output.stdout).contains("Usage:"));
+    }
+
+    for flag in ["--version", "-v"] {
+        let output = run(&[flag]);
+        assert!(output.status.success(), "{flag}: {}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            format!("lql {}\n", env!("CARGO_PKG_VERSION"))
+        );
+    }
+}
+
+#[test]
+fn docker_default_argument_is_a_supported_version_flag() {
+    let dockerfile = include_str!("../Dockerfile");
+    assert!(dockerfile.lines().any(|line| line.trim() == r#"CMD ["--version"]"#));
+
+    let output = run(&["--version"]);
+    assert!(output.status.success());
+}

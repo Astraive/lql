@@ -116,7 +116,7 @@ pub static FUNCTION_CATALOG: &[FunctionSignature] = &[
     FunctionSignature {
         name: "strlen",
         arity: Arity::Exact(1),
-        returns: ReturnType::Fixed(ValueType::String),
+        returns: ReturnType::Fixed(ValueType::Int),
     },
     FunctionSignature {
         name: "tolower",

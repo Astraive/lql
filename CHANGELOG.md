@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Fix PostgreSQL `not matches` rendering to use the native negated regex operator once.
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

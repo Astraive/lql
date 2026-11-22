@@ -305,6 +305,22 @@ fn not_in_and_regex_match_compile_for_both_targets() {
 }
 
 #[test]
+fn postgres_regex_match_and_not_match_use_single_negation() {
+    let not_matches =
+        render_query(r#"from events | where service not matches "^api$" | project service"#, Target::PostgreSQL)
+            .unwrap();
+    assert!(not_matches.sql.contains("q.\"service\" !~ $1"));
+    assert!(!not_matches.sql.contains("NOT"));
+    assert_eq!(not_matches.parameters[0].value, serde_json::json!("^api$"));
+
+    let matches =
+        render_query(r#"from events | where service matches "^api$" | project service"#, Target::PostgreSQL)
+            .unwrap();
+    assert!(matches.sql.contains("q.\"service\" ~ $1"));
+    assert!(!matches.sql.contains("!~"));
+}
+
+#[test]
 fn compile_rejects_unknown_fields_before_sql_generation() {
     let error = compile_to_duckdb(r#"from events | where definitely_missing = "x""#).unwrap_err();
     assert!(error.to_string().contains("unknown field"));

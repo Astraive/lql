@@ -334,12 +334,7 @@ fn render_expr(
                         right_value
                     ),
                     Target::PostgreSQL => format!(
-                        "{}({} {} {})",
-                        if matches!(op, BinOp::NotMatches) {
-                            "NOT "
-                        } else {
-                            ""
-                        },
+                        "{} {} {}",
                         left_value,
                         if matches!(op, BinOp::NotMatches) {
                             "!~"

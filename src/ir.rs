@@ -862,7 +862,16 @@ fn aggregate_type(
 ) -> Result<(ValueType, bool), DiagnosticBundle> {
     match func {
         AggFunction::Count | AggFunction::DCount => Ok((ValueType::Int, false)),
-        AggFunction::Sum | AggFunction::Avg | AggFunction::Min | AggFunction::Max => {
+        AggFunction::Avg => {
+            let Some(arg) = arg else {
+                return Err(type_error("aggregate requires an argument"));
+            };
+            if !arg.field_type.is_numeric() {
+                return Err(type_error("numeric aggregate requires a numeric argument"));
+            }
+            Ok((ValueType::Float, true))
+        }
+        AggFunction::Sum | AggFunction::Min | AggFunction::Max => {
             let Some(arg) = arg else {
                 return Err(type_error("aggregate requires an argument"));
             };

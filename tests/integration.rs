@@ -75,6 +75,16 @@ fn summarize_avg() {
 }
 
 #[test]
+fn averages_report_fractional_types_for_integer_and_float_inputs() {
+    let integer = render_query("from events | summarize avg(status_code)", Target::DuckDB).unwrap();
+    assert_eq!(integer.output_schema[0].field_type, ValueType::Float);
+
+    let float =
+        render_query("from events | summarize avg(to_float(status_code))", Target::DuckDB).unwrap();
+    assert_eq!(float.output_schema[0].field_type, ValueType::Float);
+}
+
+#[test]
 fn summarize_percentile() {
     let sql = compile_to_duckdb("from events | summarize p95(duration_ms)").unwrap();
     assert!(sql.contains("quantile_cont"));

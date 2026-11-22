@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Infer floating-point output metadata for AVG aggregates, including integer inputs.
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

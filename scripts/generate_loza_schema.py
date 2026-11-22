@@ -72,7 +72,11 @@ def _flatten(properties: dict[str, Any], required: set[str], prefix: str = "") -
 
 def _physical_config(defaults_path: Path) -> dict[str, Any]:
     config = yaml.safe_load(defaults_path.read_text(encoding="utf-8")) or {}
+    if not isinstance(config, dict):
+        raise ValueError("configuration must be a mapping")
     duckdb = config.get("duckdb", {})
+    if not isinstance(duckdb, dict):
+        raise ValueError("duckdb must be a mapping")
     schema = duckdb.get("schema", {})
     column_types = duckdb.get("column_types", {})
     if not isinstance(schema, dict) or not isinstance(column_types, dict):

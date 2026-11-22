@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -44,7 +45,13 @@ class LogicalTypeTests(unittest.TestCase):
         schema = {"oneOf": [{"type": "string"}, {}]}
         with self.assertRaises(ValueError):
             _logical_type(schema)
-
+    def test_duckdb_must_be_a_mapping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "defaults.yaml"
+            for value in ("null", "[]"):
+                path.write_text(f"duckdb: {value}\n", encoding="utf-8")
+                with self.subTest(value=value), self.assertRaisesRegex(ValueError, "duckdb must be a mapping"):
+                    generate_loza_schema._physical_config(path)
 
 if __name__ == "__main__":
     unittest.main()

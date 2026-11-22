@@ -250,13 +250,7 @@ impl Client {
         let payload: Value = serde_json::from_slice(&bytes).map_err(|error| {
             malformed_error("LQL response has an invalid result envelope", error)
         })?;
-        let columns = payload
-            .get("columns")
-            .and_then(Value::as_array)
-            .ok_or_else(|| config_error("LQL response has no columns"))?
-            .iter()
-            .map(decode_column)
-            .collect::<Result<Vec<_>, _>>()?;
+        let columns = decode_columns(&payload)?;
         let rows: Vec<HashMap<String, Value>> =
             serde_json::from_value(payload.get("rows").cloned().unwrap_or(Value::Null))
                 .map_err(|error| malformed_error("LQL response has invalid rows", error))?;
@@ -412,6 +406,15 @@ fn malformed_error(
         source: Some(Box::new(source)),
     }
 }
+fn malformed_message(message: &str) -> QueryError {
+    QueryError {
+        category: ErrorCategory::MalformedResponse,
+        status: None,
+        message: message.into(),
+        diagnostics: vec![],
+        source: None,
+    }
+}
 fn decode_column(value: &Value) -> Result<QueryColumn, QueryError> {
     if let Some(name) = value.as_str() {
         return Ok(QueryColumn {
@@ -421,7 +424,17 @@ fn decode_column(value: &Value) -> Result<QueryColumn, QueryError> {
         });
     }
     serde_json::from_value(value.clone())
-        .map_err(|_| config_error("LQL response has invalid columns"))
+        .map_err(|error| malformed_error("LQL response has invalid columns", error))
+}
+
+fn decode_columns(payload: &Value) -> Result<Vec<QueryColumn>, QueryError> {
+    payload
+        .get("columns")
+        .and_then(Value::as_array)
+        .ok_or_else(|| malformed_message("LQL response has no columns"))?
+        .iter()
+        .map(decode_column)
+        .collect()
 }
 fn decode_http_error(status: u16, bytes: &[u8]) -> QueryError {
     let payload: Value = serde_json::from_slice(bytes).unwrap_or(Value::Null);
@@ -448,5 +461,19 @@ fn decode_http_error(status: u16, bytes: &[u8]) -> QueryError {
             .cloned()
             .unwrap_or_default(),
         source: None,
+    }
+}
+
+#[cfg(test)]
+mod response_column_tests {
+    use super::decode_columns;
+    use serde_json::json;
+
+    #[test]
+    fn missing_or_invalid_columns_are_malformed_responses() {
+        for payload in [json!({"rows": []}), json!({"columns": [7], "rows": []})] {
+            let error = decode_columns(&payload).unwrap_err();
+            assert_eq!(error.category, super::ErrorCategory::MalformedResponse);
+        }
     }
 }

@@ -236,18 +236,30 @@ fn query_csv_quotes_and_escapes_fields() {
 #[test]
 fn cli_help_and_version_flags_succeed() {
     for flag in ["--help", "-h"] {
-        let output = run(&[flag]);
-        assert!(output.status.success(), "{flag}: {}", String::from_utf8_lossy(&output.stderr));
-        assert!(String::from_utf8_lossy(&output.stdout).contains("Usage:"));
+        for args in [&[flag][..], &["--json", flag][..], &[flag, "--json"][..]] {
+            let output = run(args);
+            assert!(
+                output.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("Usage:"));
+        }
     }
 
     for flag in ["--version", "-v"] {
-        let output = run(&[flag]);
-        assert!(output.status.success(), "{flag}: {}", String::from_utf8_lossy(&output.stderr));
-        assert_eq!(
-            String::from_utf8_lossy(&output.stdout),
-            format!("lql {}\n", env!("CARGO_PKG_VERSION"))
-        );
+        for args in [&[flag][..], &["--json", flag][..], &[flag, "--json"][..]] {
+            let output = run(args);
+            assert!(
+                output.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                format!("lql {}\n", env!("CARGO_PKG_VERSION"))
+            );
+        }
     }
 }
 

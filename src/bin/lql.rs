@@ -6,12 +6,17 @@ use serde_json::json;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    match args.get(1).map(String::as_str) {
-        Some("--help" | "-h") => {
+    let action_flag = args.iter().skip(1).find_map(|argument| match argument.as_str() {
+        "--help" | "-h" => Some("help"),
+        "--version" | "-v" => Some("version"),
+        _ => None,
+    });
+    match action_flag {
+        Some("help") => {
             print_usage();
             return;
         }
-        Some("--version" | "-v") => {
+        Some("version") => {
             println!("lql {}", env!("CARGO_PKG_VERSION"));
             return;
         }

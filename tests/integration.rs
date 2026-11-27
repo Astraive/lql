@@ -345,6 +345,25 @@ fn string_and_array_builtins_compile_for_both_targets() {
 }
 
 #[test]
+fn strlen_returns_integer_and_supports_arithmetic_and_comparisons() {
+    for target in [Target::DuckDB, Target::ClickHouse, Target::PostgreSQL] {
+        let alone = render_query("from events | project strlen(service)", target).unwrap();
+        assert_eq!(alone.output_schema[0].field_type, ValueType::Int);
+        assert!(alone.sql.contains("LENGTH(") || alone.sql.contains("length("));
+
+        let arithmetic = render_query(
+            "from events | extend size = strlen(service) + 1 | project size",
+            target,
+        )
+        .unwrap();
+        assert_eq!(arithmetic.output_schema[0].field_type, ValueType::Int);
+
+        render_query("from events | where strlen(service) > 3", target)
+            .expect("strlen should be valid in numeric comparisons");
+    }
+}
+
+#[test]
 fn parameter_order_follows_generated_sql_text() {
     let plan = render_query(
         "from events | where timestamp >= ago(24h) | summarize p95(duration_ms) by service",

@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Infer `strlen` results as integers so they support numeric expressions.
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

@@ -173,21 +173,11 @@ fn shell_quit_exits_without_running_following_commands() {
 
 #[test]
 fn shell_connect_preserves_api_key_across_reconnect() {
-    let (port, requests) =
-        spawn_collector(result_payload("ok", "done"));
-    let first = format!(
-        "loza://user:pass@127.0.0.1:{port}/first",
-    );
-    let second = format!(
-        "loza://127.0.0.1:{port}/second",
-    );
+    let (port, requests) = spawn_collector(result_payload("ok", "done"));
+    let first = format!("loza://user:pass@127.0.0.1:{port}/first",);
+    let second = format!("loza://127.0.0.1:{port}/second",);
     let mut child = Command::new(env!("CARGO_BIN_EXE_lql"))
-        .args([
-            "shell",
-            &first,
-            "--api-key-env",
-            "LQL_TEST_API_KEY",
-        ])
+        .args(["shell", &first, "--api-key-env", "LQL_TEST_API_KEY"])
         .env("LQL_TEST_API_KEY", "secret-key-123")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -218,11 +208,8 @@ fn shell_connect_preserves_api_key_across_reconnect() {
 
 #[test]
 fn query_csv_quotes_and_escapes_fields() {
-    let (port, _) =
-        spawn_collector(result_payload("a,b", "say \"hi\"\nnext"));
-    let dsn = format!(
-        "loza://127.0.0.1:{port}/events",
-    );
+    let (port, _) = spawn_collector(result_payload("a,b", "say \"hi\"\nnext"));
+    let dsn = format!("loza://127.0.0.1:{port}/events",);
     let output = run(&[
         "query",
         "--dsn",

@@ -356,7 +356,6 @@ fn is_quit_command(command: &str) -> bool {
     matches!(command, "\\q" | "\\quit" | "\\exit")
 }
 
-
 fn display_value(value: &serde_json::Value) -> String {
     match value {
         serde_json::Value::String(text) => text.clone(),
@@ -590,7 +589,6 @@ mod tests {
         assert_eq!(csv_field("first\nsecond"), "\"first\nsecond\"");
         assert_eq!(csv_field("first\rsecond"), "\"first\rsecond\"");
     }
-
 
     #[test]
     fn quit_aliases_are_recognized() {

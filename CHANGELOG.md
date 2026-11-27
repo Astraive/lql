@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Keep shell statements buffered until a semicolon outside strings and comments.
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

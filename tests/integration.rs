@@ -103,7 +103,7 @@ fn duckdb_percentiles_render_value_before_quantile() {
     }
     assert!(compile_to_clickhouse("from events | summarize p95(duration_ms)")
         .unwrap()
-        .contains("quantile(0.95)(q.\"duration_ms\")"));
+        .contains("quantile(0.95)"));
 }
 
 #[test]

@@ -81,6 +81,31 @@ fn summarize_percentile() {
 }
 
 #[test]
+fn unaliased_aggregates_on_the_same_field_get_distinct_names() {
+    let percentiles = render_query(
+        "from events | summarize p50(duration_ms), p95(duration_ms)",
+        Target::DuckDB,
+    )
+    .unwrap();
+    assert!(percentiles.sql.contains("AS \"p50_duration_ms\""));
+    assert!(percentiles.sql.contains("AS \"p95_duration_ms\""));
+
+    let endpoints = render_query(
+        "from events | summarize first(service), last(service)",
+        Target::DuckDB,
+    )
+    .unwrap();
+    assert!(endpoints.sql.contains("AS \"first_service\""));
+    assert!(endpoints.sql.contains("AS \"last_service\""));
+
+    assert!(render_query(
+        "from events | summarize first_service = first(service), first_service = last(service)",
+        Target::DuckDB,
+    )
+    .is_err());
+}
+
+#[test]
 fn sort_desc_limit() {
     let sql = compile_to_duckdb("from events | sort duration_ms desc | limit 20").unwrap();
     assert!(sql.contains("ORDER BY"));

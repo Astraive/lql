@@ -851,9 +851,28 @@ fn aggregate_name(func: &AggFunction, arg: Option<&TypedExpr>) -> String {
         AggFunction::Avg => "avg".to_string(),
         AggFunction::Min => "min".to_string(),
         AggFunction::Max => "max".to_string(),
-        _ => arg
-            .map(|a| expression_name(&a.expr))
-            .unwrap_or_else(|| "aggregate".to_string()),
+        _ => {
+            let function = match func {
+                AggFunction::P50 => "p50",
+                AggFunction::P95 => "p95",
+                AggFunction::P99 => "p99",
+                AggFunction::Percentile(_) => "percentile",
+                AggFunction::DCount => "dcount",
+                AggFunction::First => "first",
+                AggFunction::Last => "last",
+                AggFunction::Count
+                | AggFunction::Sum
+                | AggFunction::Avg
+                | AggFunction::Min
+                | AggFunction::Max => unreachable!(),
+            };
+            format!(
+                "{}_{}",
+                function,
+                arg.map(|a| expression_name(&a.expr))
+                    .unwrap_or_else(|| "aggregate".to_string())
+            )
+        }
     }
 }
 fn aggregate_type(

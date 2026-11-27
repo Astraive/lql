@@ -3,7 +3,7 @@ pub mod duckdb;
 
 use crate::ast::{AggFunction, BinOp, Expr, Literal, UnaryOp};
 use crate::error::{Diagnostic, DiagnosticBundle, Span};
-use crate::escape::{quote_identifier, quote_string_literal};
+use crate::escape::quote_identifier;
 use crate::functions::{is_builtin_function, validate_function_arity};
 use crate::ir::{RelationNode, TypedAggregation, TypedColumn, TypedExpr, TypedPipeline, ValueType};
 use serde::{Deserialize, Serialize};
@@ -636,19 +636,6 @@ fn clickhouse_type(ty: &ValueType) -> &'static str {
         _ => "String",
     }
 }
-fn quote_ident(name: &str, target: Target) -> String {
-    if name == "*" {
-        return "*".to_string();
-    }
-    match target {
-        // ClickHouse treats backslash as an escape character inside quoted
-        // identifiers, so both the backslash and the quote must be escaped.
-        Target::ClickHouse => format!("\"{}\"", escape_clickhouse(name, '"')),
-        Target::DuckDB | Target::PostgreSQL => {
-            format!("\"{}\"", name.replace('"', "\"\""))
-        }
-    }
-}
 
 /// Escape a string value for embedding in a single-quoted SQL literal of the
 /// given dialect. ClickHouse treats backslash as an escape character, so it
@@ -722,14 +709,6 @@ pub fn compile_with_policy(
     Ok(inline_parameters(&plan))
 }
 
-fn inline_value(value: &BoundValue, target: Target) -> String {
-    match &value.value {
-        Value::String(s) => format!("'{}'", escape_string_literal(s, target)),
-        Value::Null => "NULL".to_string(),
-        other => other.to_string(),
-    }
-}
-
 /// Substitute bind placeholders with their inlined, dialect-escaped values in
 /// a single left-to-right pass. Values are appended to a fresh buffer and are
 /// therefore never re-scanned, so an inlined value that itself contains a
@@ -795,13 +774,6 @@ mod tests {
             "a\\\\nb"
         );
         assert_eq!(escape_string_literal("a\nb", Target::ClickHouse), "a\\nb");
-    }
-
-    #[test]
-    fn clickhouse_identifiers_use_backslash_escaping() {
-        assert_eq!(quote_ident("plain", Target::ClickHouse), "\"plain\"");
-        assert_eq!(quote_ident("a\"b", Target::ClickHouse), r#""a\"b""#);
-        assert_eq!(quote_ident("a\"b", Target::DuckDB), "\"a\"\"b\"");
     }
 
     #[test]

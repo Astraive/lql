@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Replace existing columns when rendering extend stages.
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

@@ -103,7 +103,7 @@ fn extend_replaces_existing_columns_and_keeps_new_columns_downstream() {
     )
     .unwrap();
     assert!(replacement.contains("'replacement' AS \"service\""));
-    assert!(replacement.contains("WHERE q.\"service\" = 'replacement'"));
+    assert!(replacement.contains("WHERE (q.\"service\" = 'replacement')"));
     assert!(!replacement.contains("SELECT q.*,"));
 
     let added = compile_to_duckdb(

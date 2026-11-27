@@ -53,6 +53,16 @@ impl QueryValue {
             value: serde_json::to_value(value).unwrap_or(Value::Null),
         }
     }
+
+    pub fn try_new(
+        value_type: impl Into<String>,
+        value: impl Serialize,
+    ) -> Result<Self, serde_json::Error> {
+        Ok(Self {
+            value_type: value_type.into(),
+            value: serde_json::to_value(value)?,
+        })
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -448,5 +458,24 @@ fn decode_http_error(status: u16, bytes: &[u8]) -> QueryError {
             .cloned()
             .unwrap_or_default(),
         source: None,
+    }
+}
+
+#[cfg(test)]
+mod query_value_tests {
+    use super::QueryValue;
+
+    struct CannotSerialize;
+
+    impl serde::Serialize for CannotSerialize {
+        fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+            Err(serde::ser::Error::custom("intentional serialization failure"))
+        }
+    }
+
+    #[test]
+    fn try_new_returns_serialization_error() {
+        let error = QueryValue::try_new("string", CannotSerialize).unwrap_err();
+        assert!(error.to_string().contains("intentional serialization failure"));
     }
 }

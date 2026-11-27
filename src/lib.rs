@@ -127,8 +127,9 @@ pub fn render_query_with_options(
         policy,
         language_version: "0.1".to_string(),
     };
-    let typed = analyze_pipeline(&pipeline, &options)?;
-    compiler::render(&typed, target)
+    let typed = analyze_pipeline(&pipeline, &options)
+        .map_err(|bundle| relocate_diagnostics(input, bundle))?;
+    compiler::render(&typed, target).map_err(|bundle| relocate_diagnostics(input, bundle))
 }
 
 /// Apply the parameter, scope and policy pre-analysis transformations to a
@@ -692,5 +693,36 @@ mod tests {
             .primary_span
             .expect("parameter diagnostic must have a real span");
         assert_eq!(&input[span.start..span.end], "$id");
+    }
+
+    #[test]
+    fn custom_render_entry_points_relocate_semantic_diagnostics() {
+        let input = "from events | project missing_field";
+        let errors = [
+            render_query_with_options(
+                input,
+                Target::DuckDB,
+                &serde_json::Value::Null,
+                &serde_json::Value::Null,
+                Schema::loza_v1(Target::DuckDB),
+                QueryPolicy::default(),
+            )
+            .unwrap_err(),
+            render_query_with_parameters(input, Target::DuckDB, &serde_json::Value::Null)
+                .unwrap_err(),
+            render_query_with_context(
+                input,
+                Target::DuckDB,
+                &serde_json::Value::Null,
+                &serde_json::Value::Null,
+            )
+            .unwrap_err(),
+        ];
+        for error in errors {
+            let span = error.diagnostics[0]
+                .primary_span
+                .expect("semantic diagnostic must have a source span");
+            assert_eq!(&input[span.start..span.end], "missing_field");
+        }
     }
 }

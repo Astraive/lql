@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Classify invalid response columns as malformed server responses.
+
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

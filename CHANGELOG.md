@@ -7,6 +7,10 @@
 - Remove unused private SQL helpers and format the affected compiler and CLI sources.
 
 ## [0.5.1] - 2026-08-27
+### Fixed
+
+- Return a JSON success envelope from `lql check --json`.
+
 
 ### Changed
 

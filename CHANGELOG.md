@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Use only canonical schema fields in the large-query benchmark smoke check.
+
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

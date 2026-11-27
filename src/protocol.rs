@@ -52,6 +52,7 @@ pub struct CompileParams {
     #[serde(default)]
     pub scope: Value,
 }
+
 fn default_target() -> String {
     "duckdb".to_string()
 }
@@ -193,7 +194,7 @@ fn handle(request: RpcRequest) -> RpcResponse {
                 "compiler_version": env!("CARGO_PKG_VERSION"),
                 "language_version": LANGUAGE_VERSION,
                 "protocol_version": PROTOCOL_VERSION,
-                "targets": ["duckdb", "clickhouse"]
+                "targets": Target::ALL.map(Target::canonical_name)
             }),
         ),
         "version" => success(
@@ -282,7 +283,6 @@ fn check(id: Value, params: Value) -> RpcResponse {
         Err(bundle) => failure(id, "check_failed", "LQL check failed", Some(bundle)),
     }
 }
-
 fn success(id: Value, result: Value) -> RpcResponse {
     RpcResponse {
         id,
@@ -532,4 +532,26 @@ mod tests {
             assert_eq!(response["result"]["ok"], true, "target {target} failed");
         }
     }
+
+    #[test]
+    fn handshake_advertises_canonical_targets_from_target_definition() {
+        let response = handle(RpcRequest {
+            id: json!(20),
+            method: "handshake".into(),
+            protocol_version: PROTOCOL_VERSION,
+            language_version: LANGUAGE_VERSION.into(),
+            params: Value::Null,
+        });
+        let targets = response.result.unwrap()["targets"].as_array().unwrap().clone();
+        let names: Vec<_> = targets.iter().map(Value::as_str).collect();
+        assert_eq!(names, Target::ALL.map(Target::canonical_name).map(Some));
+        for target in names.into_iter().flatten() {
+            let response = compile(
+                json!(21),
+                json!({"query": "from events | project service", "target": target}),
+            );
+            assert!(response.error.is_none(), "advertised target {target} must compile");
+        }
+    }
+
 }

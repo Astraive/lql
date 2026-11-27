@@ -17,6 +17,17 @@ pub enum Target {
     ClickHouse,
     PostgreSQL,
 }
+impl Target {
+    pub const ALL: [Self; 3] = [Self::DuckDB, Self::ClickHouse, Self::PostgreSQL];
+
+    pub const fn canonical_name(self) -> &'static str {
+        match self {
+            Self::DuckDB => "duckdb",
+            Self::ClickHouse => "clickhouse",
+            Self::PostgreSQL => "postgresql",
+        }
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BoundValue {

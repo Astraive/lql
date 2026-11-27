@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Derive advertised protocol targets from the canonical target definitions.
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

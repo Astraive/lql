@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Relocate semantic diagnostics for custom render entry points to source spans.
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

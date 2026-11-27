@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Add an explicit string parameter override and reject non-finite numeric parameters.
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

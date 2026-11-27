@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Validate protocol check parameters before applying default target behavior.
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

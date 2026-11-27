@@ -52,6 +52,13 @@ pub struct CompileParams {
     #[serde(default)]
     pub scope: Value,
 }
+
+#[derive(Debug, Clone, Deserialize)]
+struct CheckParams {
+    query: String,
+    #[serde(default = "default_target")]
+    target: String,
+}
 fn default_target() -> String {
     "duckdb".to_string()
 }
@@ -264,20 +271,15 @@ fn schema_for_query(query: &str, document: &Value, target: Target) -> Result<Sch
     Schema::from_document(document, source_name)
 }
 fn check(id: Value, params: Value) -> RpcResponse {
-    let query = params
-        .get("query")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    let target = match parse_target(
-        params
-            .get("target")
-            .and_then(Value::as_str)
-            .unwrap_or("duckdb"),
-    ) {
+    let params = match serde_json::from_value::<CheckParams>(params) {
+        Ok(params) => params,
+        Err(error) => return failure(id, "invalid_params", &error.to_string(), None),
+    };
+    let target = match parse_target(&params.target) {
         Ok(target) => target,
         Err(()) => return failure(id, "invalid_target", "unsupported target", None),
     };
-    match crate::analyze_source(query, &analysis_options(target)) {
+    match crate::analyze_source(&params.query, &analysis_options(target)) {
         Ok(_) => success(id, json!({ "ok": true })),
         Err(bundle) => failure(id, "check_failed", "LQL check failed", Some(bundle)),
     }
@@ -531,5 +533,25 @@ mod tests {
             assert_eq!(response["id"], id);
             assert_eq!(response["result"]["ok"], true, "target {target} failed");
         }
+    }
+
+    #[test]
+    fn check_rejects_malformed_parameters_and_keeps_defaults_and_target_options() {
+        for params in [
+            json!({}),
+            json!({"query": 99}),
+            json!({"query": "from events", "target": 99}),
+        ] {
+            assert_eq!(
+                check(json!(14), params).error.unwrap().code,
+                "invalid_params"
+            );
+        }
+        assert!(check(json!(15), json!({"query": "from events"}))
+            .error
+            .is_none());
+        assert!(check(json!(16), json!({"query": "from events", "target": "postgres"}))
+            .error
+            .is_none());
     }
 }

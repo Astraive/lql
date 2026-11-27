@@ -466,14 +466,39 @@ fn decode_http_error(status: u16, bytes: &[u8]) -> QueryError {
 
 #[cfg(test)]
 mod response_column_tests {
-    use super::decode_columns;
-    use serde_json::json;
+    use super::{Client, ConnectionConfig, ErrorCategory};
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
 
     #[test]
     fn missing_or_invalid_columns_are_malformed_responses() {
-        for payload in [json!({"rows": []}), json!({"columns": [7], "rows": []})] {
-            let error = decode_columns(&payload).unwrap_err();
-            assert_eq!(error.category, super::ErrorCategory::MalformedResponse);
+        for body in [r#"{"rows":[]}"#, r#"{"columns":[7],"rows":[]}"#] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let response = body.to_string();
+            let server = std::thread::spawn(move || {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut request = [0; 8192];
+                let _ = stream.read(&mut request);
+                write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response.len(),
+                    response
+                )
+                .unwrap();
+            });
+            let client = Client::new(ConnectionConfig {
+                endpoint: Some(endpoint),
+                collector: Some("audit".into()),
+                ..Default::default()
+            })
+            .unwrap();
+            let error = client
+                .query("from events", std::collections::HashMap::new(), 1)
+                .unwrap_err();
+            assert_eq!(error.category, ErrorCategory::MalformedResponse);
+            server.join().unwrap();
         }
     }
 }

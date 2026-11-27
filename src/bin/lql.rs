@@ -181,7 +181,7 @@ fn query_parameters(args: &[String]) -> Result<HashMap<String, QueryValue>, Stri
             if name.is_empty() {
                 return Err("--param name cannot be empty".into());
             }
-            result.insert(name.to_string(), typed_value(value));
+            result.insert(name.to_string(), typed_value(value)?);
             index += 2;
         } else {
             index += 1;
@@ -190,16 +190,17 @@ fn query_parameters(args: &[String]) -> Result<HashMap<String, QueryValue>, Stri
     Ok(result)
 }
 
-fn typed_value(value: &str) -> QueryValue {
-    if value == "true" || value == "false" {
-        QueryValue::new("bool", value == "true")
+fn typed_value(value: &str) -> Result<QueryValue, String> {
+    let result = if value == "true" || value == "false" {
+        QueryValue::try_new("bool", value == "true")
     } else if let Ok(number) = value.parse::<i64>() {
-        QueryValue::new("int", number)
+        QueryValue::try_new("int", number)
     } else if let Ok(number) = value.parse::<f64>() {
-        QueryValue::new("float", number)
+        QueryValue::try_new("float", number)
     } else {
-        QueryValue::new("string", value)
-    }
+        QueryValue::try_new("string", value)
+    };
+    result.map_err(|error| format!("parameter serialization failed: {error}"))
 }
 
 /// Point a connection config at a new DSN while preserving every other

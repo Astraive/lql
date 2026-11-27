@@ -75,13 +75,30 @@ fn render_relation(
             ))
         }
         RelationNode::Extend {
-            input, name, expr, ..
+            input,
+            name,
+            expr,
+            columns,
         } => {
             let inner = render_relation(input, ctx)?;
+            let values = columns
+                .iter()
+                .map(|column| {
+                    let value = if column.name == *name {
+                        render_expr(expr, ctx, "q")?
+                    } else {
+                        format!("q.{}", quote_identifier(&column.name, ctx.target))
+                    };
+                    Ok(format!(
+                        "{} AS {}",
+                        value,
+                        quote_identifier(&column.name, ctx.target)
+                    ))
+                })
+                .collect::<Result<Vec<_>, DiagnosticBundle>>()?;
             Ok(format!(
-                "SELECT q.*, {} AS {} FROM ({}) AS q",
-                render_expr(expr, ctx, "q")?,
-                quote_identifier(name, ctx.target),
+                "SELECT {} FROM ({}) AS q",
+                values.join(", "),
                 inner
             ))
         }

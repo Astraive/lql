@@ -181,7 +181,7 @@ fn query_parameters(args: &[String]) -> Result<HashMap<String, QueryValue>, Stri
             if name.is_empty() {
                 return Err("--param name cannot be empty".into());
             }
-            result.insert(name.to_string(), typed_value(value));
+            result.insert(name.to_string(), typed_value(value)?);
             index += 2;
         } else {
             index += 1;
@@ -190,15 +190,21 @@ fn query_parameters(args: &[String]) -> Result<HashMap<String, QueryValue>, Stri
     Ok(result)
 }
 
-fn typed_value(value: &str) -> QueryValue {
+fn typed_value(value: &str) -> Result<QueryValue, String> {
+    if let Some(value) = value.strip_prefix("string:") {
+        return Ok(QueryValue::new("string", value));
+    }
     if value == "true" || value == "false" {
-        QueryValue::new("bool", value == "true")
+        Ok(QueryValue::new("bool", value == "true"))
     } else if let Ok(number) = value.parse::<i64>() {
-        QueryValue::new("int", number)
+        Ok(QueryValue::new("int", number))
     } else if let Ok(number) = value.parse::<f64>() {
-        QueryValue::new("float", number)
+        if !number.is_finite() {
+            return Err(format!("non-finite numeric parameter {value:?} is not supported; use string:{value} to pass it as text"));
+        }
+        Ok(QueryValue::new("float", number))
     } else {
-        QueryValue::new("string", value)
+        Ok(QueryValue::new("string", value))
     }
 }
 
@@ -459,7 +465,7 @@ fn emit_diagnostics(json_output: bool, bundle: &lql::DiagnosticBundle, source: &
 }
 
 fn print_usage() {
-    println!("Loza Query Language (LQL) compiler and live client\n\nUsage:\n  lql compile [--json] <query>\n  lql compile-ch [--json] <query>\n  lql check [--json] <query>\n  lql query --dsn <loza://...> --query <source> [--database-connection NAME] [--param name=value]\n  lql connect [<dsn>] [--database-connection NAME]\n  lql shell [<dsn>] [--database-connection NAME]\n  lql serve --stdio\n  lql fields [--json]");
+    println!("Loza Query Language (LQL) compiler and live client\n\nUsage:\n  lql compile [--json] <query>\n  lql compile-ch [--json] <query>\n  lql check [--json] <query>\n  lql query --dsn <loza://...> --query <source> [--database-connection NAME] [--param name=value]\n    Use name=string:value to force a parameter to remain text.\n  lql connect [<dsn>] [--database-connection NAME]\n  lql shell [<dsn>] [--database-connection NAME]\n  lql serve --stdio\n  lql fields [--json]");
 }
 
 #[cfg(test)]
@@ -611,6 +617,14 @@ mod tests {
         assert_eq!(csv_record(&fields), "id,\"a,b\",\"line1\nline2\"");
     }
 
+    #[test]
+    fn parameter_values_support_explicit_strings_and_reject_non_finite_numbers() {
+        assert_eq!(typed_value("string:00123").unwrap().value, json!("00123"));
+        assert_eq!(typed_value("string:true").unwrap().value, json!("true"));
+        assert_eq!(typed_value("true").unwrap().value, json!(true));
+        assert!(typed_value("NaN").unwrap_err().contains("non-finite"));
+        assert!(typed_value("inf").unwrap_err().contains("string:inf"));
+    }
     #[test]
     fn quit_aliases_are_recognized() {
         for command in ["\\q", "\\quit", "\\exit"] {

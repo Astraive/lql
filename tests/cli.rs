@@ -36,6 +36,25 @@ fn spawn_collector(body: String) -> (u16, mpsc::Receiver<String>) {
                 Err(_) => break,
             }
         }
+        if let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+            let headers = String::from_utf8_lossy(&request[..header_end]);
+            let content_length = headers
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                })
+                .unwrap_or(0);
+            let request_end = header_end + 4 + content_length;
+            while request.len() < request_end {
+                match stream.read(&mut chunk) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => request.extend_from_slice(&chunk[..n]),
+                }
+            }
+        }
         let _ = tx.send(String::from_utf8_lossy(&request).into_owned());
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -209,6 +228,35 @@ fn shell_connect_preserves_api_key_across_reconnect() {
         request.contains("Bearer secret-key-123"),
         "api_key must survive \\connect: {request}"
     );
+}
+
+#[test]
+fn shell_submits_one_complete_multiline_query_with_internal_semicolons() {
+    let (port, requests) = spawn_collector(result_payload("ok", "done"));
+    let dsn = format!("loza://127.0.0.1:{port}/events");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_lql"))
+        .args(["shell", &dsn])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("LQL CLI should start");
+    {
+        let stdin = child.stdin.as_mut().unwrap();
+        write!(
+            stdin,
+            "from events | where message = \"line one;\nline two\";\n\\q\n"
+        )
+        .unwrap();
+    }
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let request = requests
+        .recv_timeout(Duration::from_secs(5))
+        .expect("collector should receive the query");
+    assert!(request.contains("line one;"), "{request}");
+    assert!(request.contains("line two"), "{request}");
+    assert!(request.contains("line one;\\nline two"), "{request}");
 }
 
 #[test]

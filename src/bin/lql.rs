@@ -212,6 +212,37 @@ fn apply_connect(config: &mut ConnectionConfig, dsn: &str) {
     config.dsn = Some(dsn.trim().to_string());
 }
 
+fn statement_terminated(source: &str) -> bool {
+    let mut quote = None;
+    let mut escaped = false;
+    let mut comment = false;
+    for ch in source.chars() {
+        if comment {
+            if ch == '\n' {
+                comment = false;
+            }
+            continue;
+        }
+        if let Some(delimiter) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == delimiter {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '#' => comment = true,
+            ';' => return true,
+            _ => {}
+        }
+    }
+    false
+}
+
 fn run_shell(args: &[String]) {
     let mut config =
         connection_config(args).unwrap_or_else(|error| emit_message_error(false, &error));
@@ -281,7 +312,7 @@ fn run_shell(args: &[String]) {
         }
         pending.push_str(&line);
         pending.push('\n');
-        if command == ";" || line.trim_end().ends_with(';') {
+        if statement_terminated(&pending) {
             let source = pending.trim().trim_end_matches(';').trim().to_string();
             pending.clear();
             let started = std::time::Instant::now();
@@ -611,6 +642,16 @@ mod tests {
         assert_eq!(csv_record(&fields), "id,\"a,b\",\"line1\nline2\"");
     }
 
+    #[test]
+    fn shell_statement_terminator_ignores_quotes_and_comments_across_lines() {
+        assert!(!statement_terminated(
+            "from events | where message = \"line one;\nline two\""
+        ));
+        assert!(!statement_terminated("from events # comment;\n| project service"));
+        assert!(statement_terminated(
+            "from events | where message = \"line one; two\";"
+        ));
+    }
     #[test]
     fn quit_aliases_are_recognized() {
         for command in ["\\q", "\\quit", "\\exit"] {

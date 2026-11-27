@@ -871,6 +871,12 @@ fn aggregate_type(
             }
             Ok((arg.field_type.clone(), true))
         }
+        AggFunction::First | AggFunction::Last => {
+            let Some(arg) = arg else {
+                return Err(type_error("aggregate requires an argument"));
+            };
+            Ok((arg.field_type.clone(), true))
+        }
         _ => Ok((ValueType::Float, true)),
     }
 }

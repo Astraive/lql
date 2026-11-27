@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Preserve argument types in `first` and `last` aggregate output schemas.
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

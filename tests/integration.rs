@@ -491,6 +491,50 @@ fn first_and_last_aggregates_render_as_dialect_aggregates() {
 }
 
 #[test]
+fn first_and_last_aggregates_preserve_argument_types_in_output_schema() {
+    let document = serde_json::json!({
+        "schema_version": "v1",
+        "sources": {
+            "events": {
+                "physical": "events",
+                "fields": [
+                    {"name": "service", "field_type": "string", "physical": {"column": "service", "storage": "projection"}},
+                    {"name": "duration_ms", "field_type": "float", "physical": {"column": "duration_ms", "storage": "projection"}}
+                ]
+            }
+        }
+    });
+    let schema = Schema::from_document(&document, "events").unwrap();
+    let plan = lql::render_query_with_options(
+        "from events | summarize first_service = first(service), last_service = last(service), first_duration = first(duration_ms), last_duration = last(duration_ms)",
+        Target::DuckDB,
+        &serde_json::Value::Null,
+        &serde_json::Value::Null,
+        schema,
+        QueryPolicy::default(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        plan.output_schema
+            .iter()
+            .map(|column| column.field_type.clone())
+            .collect::<Vec<_>>(),
+        vec![
+            ValueType::String,
+            ValueType::String,
+            ValueType::Float,
+            ValueType::Float
+        ]
+    );
+    assert!(plan.output_schema.iter().all(|column| column.nullable));
+    assert!(plan.sql.contains("FIRST(q.\"service\")"));
+    assert!(plan.sql.contains("LAST(q.\"service\")"));
+    assert!(plan.sql.contains("FIRST(q.\"duration_ms\")"));
+    assert!(plan.sql.contains("LAST(q.\"duration_ms\")"));
+}
+
+#[test]
 fn log_has_natural_logarithm_semantics_on_both_targets() {
     let duckdb = compile_to_duckdb("from events | project log(duration_ms)").unwrap();
     assert!(duckdb.contains("LN("));

@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Expose serialization failures from Rust client query-value construction.
+
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

@@ -132,11 +132,12 @@ fn render_relation(
             );
             let mut sql = format!("SELECT {} FROM ({}) AS q", values.join(", "), inner);
             if !groups.is_empty() {
-                let group_sql = groups
-                    .iter()
-                    .map(|expr| render_expr(expr, ctx, "q"))
-                    .collect::<Result<Vec<_>, _>>()?;
-                sql.push_str(&format!(" GROUP BY {}", group_sql.join(", ")));
+                // Group ordinals keep parameterized expressions identical to their
+                // SELECT expressions without duplicating bind-marker identities.
+                let group_ordinals = (1..=groups.len())
+                    .map(|ordinal| ordinal.to_string())
+                    .collect::<Vec<_>>();
+                sql.push_str(&format!(" GROUP BY {}", group_ordinals.join(", ")));
             }
             Ok(sql)
         }
@@ -185,8 +186,8 @@ fn render_relation(
                 }
             };
             Ok(format!(
-                "SELECT {} AS \"timestamp\", COUNT(*) AS \"count\" FROM ({}) AS q GROUP BY {}",
-                bucket, inner, bucket
+                "SELECT {} AS \"timestamp\", COUNT(*) AS \"count\" FROM ({}) AS q GROUP BY 1",
+                bucket, inner
             ))
         }
     }

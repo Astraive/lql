@@ -57,6 +57,18 @@ mod tests {
     }
 
     #[test]
+    fn sort_multiple_keys() {
+        let sql = compile_query("from events | sort timestamp asc, event_id asc");
+        assert!(sql.contains(r#"ORDER BY q."timestamp" ASC, q."event_id" ASC"#));
+    }
+
+    #[test]
+    fn separately_piped_sorts_compile_as_separate_stages() {
+        let sql = compile_query("from events | sort timestamp asc | sort event_id asc");
+        assert_eq!(sql.matches("ORDER BY").count(), 2);
+    }
+
+    #[test]
     fn offset_compiles() {
         let sql = compile_query("from events | sort timestamp asc | offset 10 | limit 5");
         assert!(sql.contains("OFFSET 10"));

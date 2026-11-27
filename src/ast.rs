@@ -18,6 +18,9 @@ pub enum Statement {
         field: Expr,
         order: Order,
     },
+    SortBy {
+        keys: Vec<(Expr, Order)>,
+    },
     Limit(usize),
     Offset(usize),
     Distinct(Vec<Expr>),

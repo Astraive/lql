@@ -244,6 +244,11 @@ fn bind_pipeline(
                 }
             }
             Statement::Sort { field, .. } => bind_expr(field, parameters)?,
+            Statement::SortBy { keys } => {
+                for (field, _) in keys {
+                    bind_expr(field, parameters)?;
+                }
+            }
             Statement::Distinct(exprs) | Statement::Project(exprs) => {
                 for expr in exprs {
                     bind_expr(expr, parameters)?;
@@ -268,6 +273,11 @@ fn collect_statement_parameters(statement: &Statement, used: &mut HashSet<String
     match statement {
         Statement::Where(expr) | Statement::Sort { field: expr, .. } => {
             collect_expr_parameters(expr, used)
+        }
+        Statement::SortBy { keys } => {
+            for (expr, _) in keys {
+                collect_expr_parameters(expr, used);
+            }
         }
         Statement::Summarize { aggregations, by } => {
             for aggregation in aggregations {

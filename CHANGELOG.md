@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Reject duplicate physical projections for a single logical field.
+
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

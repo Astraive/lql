@@ -334,10 +334,7 @@ fn write_csv<W: Write>(result: &lql_client::QueryResult, mut out: W) -> io::Resu
             .columns
             .iter()
             .map(|column| {
-                let value = row
-                    .get(&column.name)
-                    .map(display_value)
-                    .unwrap_or_default();
+                let value = row.get(&column.name).map(display_value).unwrap_or_default();
                 csv_field(&value)
             })
             .collect::<Vec<_>>()
@@ -357,14 +354,6 @@ fn reconnect(config: &ConnectionConfig, dsn: &str) -> ConnectionConfig {
 
 fn is_quit_command(command: &str) -> bool {
     matches!(command, "\\q" | "\\quit" | "\\exit")
-}
-
-fn csv_record(fields: &[String]) -> String {
-    fields
-        .iter()
-        .map(|field| csv_field(field))
-        .collect::<Vec<_>>()
-        .join(",")
 }
 
 fn display_value(value: &serde_json::Value) -> String {
@@ -599,16 +588,6 @@ mod tests {
         );
         assert_eq!(csv_field("first\nsecond"), "\"first\nsecond\"");
         assert_eq!(csv_field("first\rsecond"), "\"first\rsecond\"");
-    }
-
-    #[test]
-    fn csv_record_escapes_every_field() {
-        let fields = vec![
-            "id".to_string(),
-            "a,b".to_string(),
-            "line1\nline2".to_string(),
-        ];
-        assert_eq!(csv_record(&fields), "id,\"a,b\",\"line1\nline2\"");
     }
 
     #[test]

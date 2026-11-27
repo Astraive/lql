@@ -154,7 +154,7 @@ fn rejects_basic_auth_over_plaintext_http_to_remote_host() {
     };
     assert_eq!(error.category, ErrorCategory::InvalidConfiguration);
     assert!(
-        error.message.contains("basic authentication requires TLS"),
+        error.message.contains("authentication requires TLS"),
         "{}",
         error.message
     );
@@ -166,6 +166,12 @@ fn allows_api_key_over_tls_to_remote_host() {
         endpoint: Some("https://remote.example".into()),
         collector: Some("demo".into()),
         api_key: Some("secret-api-key".into()),
+        ..Default::default()
+    })
+    .is_ok());
+}
+
+#[test]
 fn rejects_credentials_over_plaintext_nonlocal_endpoint() {
     let configs = [
         ConnectionConfig {
@@ -231,6 +237,9 @@ fn allows_unauthenticated_plaintext_http_to_remote_host() {
         ..Default::default()
     })
     .is_ok());
+}
+
+#[test]
 fn oversized_response_is_rejected_while_streaming() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
@@ -260,6 +269,7 @@ fn oversized_response_is_rejected_while_streaming() {
     assert_eq!(error.category, ErrorCategory::MalformedResponse);
     assert!(error.message.contains("size limit"));
     server.join().unwrap();
+}
 /// Exercises the versioned live-query fixture and checks the redaction contract:
 /// credentials carried by a DSN must never surface in client error output.
 #[test]

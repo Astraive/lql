@@ -271,3 +271,30 @@ fn docker_default_argument_is_a_supported_version_flag() {
     let output = run(&["--version"]);
     assert!(output.status.success());
 }
+#[test]
+fn command_option_value_matching_action_flag_does_not_intercept_dispatch() {
+    let (port, requests) = spawn_collector(result_payload("ok", "done"));
+    let dsn = format!("loza://127.0.0.1:{port}/events");
+    let output = run(&[
+        "query",
+        "--dsn",
+        &dsn,
+        "--query",
+        "from events",
+        "--service",
+        "--version",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let request = requests
+        .recv_timeout(Duration::from_secs(5))
+        .expect("collector should receive the query");
+    assert!(
+        request.to_ascii_lowercase().contains("x-loza-service: --version"),
+        "{request}"
+    );
+}

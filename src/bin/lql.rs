@@ -6,11 +6,20 @@ use serde_json::json;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let action_flag = args.iter().skip(1).find_map(|argument| match argument.as_str() {
-        "--help" | "-h" => Some("help"),
-        "--version" | "-v" => Some("version"),
-        _ => None,
-    });
+    let action_flag = args
+        .iter()
+        .skip(1)
+        .take_while(|argument| {
+            matches!(
+                argument.as_str(),
+                "--json" | "--help" | "-h" | "--version" | "-v"
+            )
+        })
+        .find_map(|argument| match argument.as_str() {
+            "--help" | "-h" => Some("help"),
+            "--version" | "-v" => Some("version"),
+            _ => None,
+        });
     match action_flag {
         Some("help") => {
             print_usage();

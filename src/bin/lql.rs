@@ -356,13 +356,6 @@ fn is_quit_command(command: &str) -> bool {
     matches!(command, "\\q" | "\\quit" | "\\exit")
 }
 
-fn csv_record(fields: &[String]) -> String {
-    fields
-        .iter()
-        .map(|field| csv_field(field))
-        .collect::<Vec<_>>()
-        .join(",")
-}
 
 fn display_value(value: &serde_json::Value) -> String {
     match value {
@@ -598,15 +591,6 @@ mod tests {
         assert_eq!(csv_field("first\rsecond"), "\"first\rsecond\"");
     }
 
-    #[test]
-    fn csv_record_escapes_every_field() {
-        let fields = vec![
-            "id".to_string(),
-            "a,b".to_string(),
-            "line1\nline2".to_string(),
-        ];
-        assert_eq!(csv_record(&fields), "id,\"a,b\",\"line1\nline2\"");
-    }
 
     #[test]
     fn quit_aliases_are_recognized() {

@@ -603,6 +603,16 @@ fn schema_columns(schema: &Schema) -> Vec<TypedColumn> {
     result.sort_by(|a, b| a.name.cmp(&b.name));
     result
 }
+fn numeric_binary_type(op: &BinOp, left: &ValueType, right: &ValueType) -> ValueType {
+    if matches!(op, BinOp::Div) || left == &ValueType::Float || right == &ValueType::Float {
+        ValueType::Float
+    } else if left == &ValueType::Decimal || right == &ValueType::Decimal {
+        ValueType::Decimal
+    } else {
+        ValueType::Int
+    }
+}
+
 
 fn type_expr(expr: &Expr, columns: &[TypedColumn]) -> Result<TypedExpr, DiagnosticBundle> {
     let span = Span::empty(0);
@@ -723,7 +733,7 @@ fn type_expr(expr: &Expr, columns: &[TypedColumn]) -> Result<TypedExpr, Diagnost
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod
                     if l.field_type.is_numeric() && r.field_type.is_numeric() =>
                 {
-                    l.field_type.clone()
+                    numeric_binary_type(op, &l.field_type, &r.field_type)
                 }
                 BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Mod => {
                     return Err(type_error(
@@ -937,5 +947,21 @@ mod policy_tests {
         let options = AnalysisOptions::duckdb();
         crate::analyze_source("from events | project *", &options)
             .expect("wildcard projection is allowed when no field policy is configured");
+    }
+
+    #[test]
+    fn mixed_numeric_arithmetic_promotes_to_float() {
+        for query in [
+            "from events | extend calculated = 1 + 0.5 | project calculated",
+            "from events | extend calculated = 0.5 + 1 | project calculated",
+        ] {
+            let typed = crate::analyze_source(query, &AnalysisOptions::duckdb())
+                .expect("mixed numeric arithmetic should analyze");
+            assert_eq!(typed.output_schema[0].field_type, ValueType::Float);
+        }
+        assert_eq!(
+            numeric_binary_type(&BinOp::Div, &ValueType::Int, &ValueType::Int),
+            ValueType::Float
+        );
     }
 }

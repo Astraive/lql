@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Apply local endpoint defaults to IPv6 loopback DSNs.
+
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

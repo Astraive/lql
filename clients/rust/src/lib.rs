@@ -348,7 +348,7 @@ fn valid_collector(value: &str) -> bool {
             .is_some_and(|c| c.is_ascii_alphanumeric())
 }
 fn is_localhost(host: &str) -> bool {
-    matches!(host, "localhost" | "127.0.0.1" | "::1")
+    matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
 }
 fn urlencoding(value: &str) -> String {
     value
@@ -448,5 +448,20 @@ fn decode_http_error(status: u16, bytes: &[u8]) -> QueryError {
             .cloned()
             .unwrap_or_default(),
         source: None,
+    }
+}
+#[cfg(test)]
+mod dsn_tests {
+    use super::parse_dsn;
+
+    #[test]
+    fn loopback_hosts_use_local_defaults() {
+        for (dsn, endpoint) in [
+            ("loza://localhost/audit", "http://localhost:9308"),
+            ("loza://127.0.0.1/audit", "http://127.0.0.1:9308"),
+            ("loza://[::1]/audit", "http://[::1]:9308"),
+        ] {
+            assert_eq!(parse_dsn(dsn).unwrap().endpoint, endpoint);
+        }
     }
 }

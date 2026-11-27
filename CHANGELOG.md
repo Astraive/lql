@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Validate the DuckDB schema configuration mapping before accessing its properties.
+
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

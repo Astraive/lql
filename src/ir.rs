@@ -418,6 +418,17 @@ pub fn analyze(
                     columns: columns.clone(),
                 }
             }
+            Statement::SortBy { keys } => {
+                let typed = keys
+                    .iter()
+                    .map(|(field, order)| type_expr(field, &columns).map(|typed| (typed, *order)))
+                    .collect::<Result<Vec<_>, _>>()?;
+                RelationNode::Sort {
+                    input: Box::new(root),
+                    keys: typed,
+                    columns: columns.clone(),
+                }
+            }
             Statement::Top { count, by, order } => {
                 let keys = by
                     .iter()
@@ -495,6 +506,7 @@ fn validate_policy_fields(
     for statement in &pipeline.statements {
         let expressions: Vec<&Expr> = match statement {
             Statement::Where(expr) | Statement::Sort { field: expr, .. } => vec![expr],
+            Statement::SortBy { keys } => keys.iter().map(|(expr, _)| expr).collect(),
             Statement::Summarize { aggregations, by } => aggregations
                 .iter()
                 .filter_map(|aggregation| aggregation.arg.as_ref())

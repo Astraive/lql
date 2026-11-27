@@ -43,13 +43,44 @@ impl Parser {
         // First statement must be 'from'
         statements.push(self.parse_from()?);
 
-        // Parse pipe-separated statements
         while self.pos < self.tokens.len() {
             self.expect_token(&Token::Pipe)?;
-            statements.push(self.parse_statement()?);
+            if self.check(&Token::Sort) {
+                statements.push(self.parse_sort()?);
+            } else {
+                statements.push(self.parse_statement()?);
+            }
         }
 
         Ok(Pipeline { statements })
+    }
+
+    fn parse_sort(&mut self) -> Result<Statement, LqlError> {
+        self.expect_keyword(&Token::Sort)?;
+        let mut keys = Vec::new();
+        loop {
+            let field = self.parse_expr()?;
+            let order = if self.check(&Token::Asc) {
+                self.advance();
+                Order::Asc
+            } else if self.check(&Token::Desc) {
+                self.advance();
+                Order::Desc
+            } else {
+                Order::Desc
+            };
+            keys.push((field, order));
+            if !self.check(&Token::Comma) {
+                break;
+            }
+            self.advance();
+        }
+        if keys.len() == 1 {
+            let (field, order) = keys.pop().expect("one sort key");
+            Ok(Statement::Sort { field, order })
+        } else {
+            Ok(Statement::SortBy { keys })
+        }
     }
 
     fn parse_from(&mut self) -> Result<Statement, LqlError> {
@@ -86,20 +117,6 @@ impl Parser {
                     by = self.parse_expr_list()?;
                 }
                 Ok(Statement::Summarize { aggregations, by })
-            }
-            Token::Sort => {
-                self.advance();
-                let field = self.parse_expr()?;
-                let order = if self.check(&Token::Asc) {
-                    self.advance();
-                    Order::Asc
-                } else if self.check(&Token::Desc) {
-                    self.advance();
-                    Order::Desc
-                } else {
-                    Order::Desc
-                };
-                Ok(Statement::Sort { field, order })
             }
             Token::Limit => {
                 self.advance();
@@ -779,6 +796,27 @@ mod tests {
         } else {
             panic!("expected Sort");
         }
+    }
+    #[test]
+    fn sort_multiple_keys() {
+        let p = parse("from events | sort timestamp asc, event_id asc");
+        assert_eq!(p.statements.len(), 2);
+        assert!(matches!(
+            &p.statements[1],
+            Statement::SortBy { keys }
+                if keys == &vec![
+                    (Expr::Column("timestamp".to_string()), Order::Asc),
+                    (Expr::Column("event_id".to_string()), Order::Asc),
+                ]
+        ));
+    }
+
+    #[test]
+    fn separately_piped_sorts_remain_separate() {
+        let p = parse("from events | sort timestamp asc | sort event_id asc");
+        assert_eq!(p.statements.len(), 3);
+        assert!(matches!(&p.statements[1], Statement::Sort { .. }));
+        assert!(matches!(&p.statements[2], Statement::Sort { .. }));
     }
 
     #[test]

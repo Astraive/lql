@@ -232,3 +232,69 @@ fn query_csv_quotes_and_escapes_fields() {
         "CSV must quote commas and double embedded quotes/newlines: {stdout:?}"
     );
 }
+
+#[test]
+fn cli_help_and_version_flags_succeed() {
+    for flag in ["--help", "-h"] {
+        for args in [&[flag][..], &["--json", flag][..], &[flag, "--json"][..]] {
+            let output = run(args);
+            assert!(
+                output.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8_lossy(&output.stdout).contains("Usage:"));
+        }
+    }
+
+    for flag in ["--version", "-v"] {
+        for args in [&[flag][..], &["--json", flag][..], &[flag, "--json"][..]] {
+            let output = run(args);
+            assert!(
+                output.status.success(),
+                "{args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert_eq!(
+                String::from_utf8_lossy(&output.stdout),
+                format!("lql {}\n", env!("CARGO_PKG_VERSION"))
+            );
+        }
+    }
+}
+
+#[test]
+fn docker_default_argument_is_a_supported_version_flag() {
+    let dockerfile = include_str!("../Dockerfile");
+    assert!(dockerfile.lines().any(|line| line.trim() == r#"CMD ["--version"]"#));
+
+    let output = run(&["--version"]);
+    assert!(output.status.success());
+}
+#[test]
+fn command_option_value_matching_action_flag_does_not_intercept_dispatch() {
+    let (port, requests) = spawn_collector(result_payload("ok", "done"));
+    let dsn = format!("loza://127.0.0.1:{port}/events");
+    let output = run(&[
+        "query",
+        "--dsn",
+        &dsn,
+        "--query",
+        "from events",
+        "--service",
+        "--version",
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let request = requests
+        .recv_timeout(Duration::from_secs(5))
+        .expect("collector should receive the query");
+    assert!(
+        request.to_ascii_lowercase().contains("x-loza-service: --version"),
+        "{request}"
+    );
+}

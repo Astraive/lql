@@ -6,6 +6,31 @@ use serde_json::json;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    let action_flag = args
+        .iter()
+        .skip(1)
+        .take_while(|argument| {
+            matches!(
+                argument.as_str(),
+                "--json" | "--help" | "-h" | "--version" | "-v"
+            )
+        })
+        .find_map(|argument| match argument.as_str() {
+            "--help" | "-h" => Some("help"),
+            "--version" | "-v" => Some("version"),
+            _ => None,
+        });
+    match action_flag {
+        Some("help") => {
+            print_usage();
+            return;
+        }
+        Some("version") => {
+            println!("lql {}", env!("CARGO_PKG_VERSION"));
+            return;
+        }
+        _ => {}
+    }
     let json_output = args.iter().skip(1).any(|arg| arg == "--json");
     let command_index = args
         .iter()
@@ -26,8 +51,6 @@ fn main() {
         "fields" => run_fields(json_output),
         "query" => run_query(&args[command_index + 1..], json_output),
         "connect" | "shell" => run_shell(&args[command_index + 1..]),
-        "--help" | "-h" => print_usage(),
-        "--version" | "-v" => println!("lql {}", env!("CARGO_PKG_VERSION")),
         _ => emit_message_error(json_output, &format!("unknown command: {}", command)),
     }
 }

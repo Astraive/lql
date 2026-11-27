@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Render DuckDB percentile aggregates with the value argument before the quantile.
+
 ## [0.5.1] - 2026-08-27
 
 ### Changed

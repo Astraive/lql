@@ -86,13 +86,22 @@ fn render_relation(
             ))
         }
         RelationNode::Project {
-            input, expressions, ..
+            input,
+            expressions,
+            columns,
         } => {
             let inner = render_relation(input, ctx)?;
             let values = expressions
                 .iter()
-                .map(|expr| render_expr(expr, ctx, "q"))
-                .collect::<Result<Vec<_>, _>>()?;
+                .zip(columns)
+                .map(|(expr, column)| {
+                    Ok(format!(
+                        "{} AS {}",
+                        render_expr(expr, ctx, "q")?,
+                        quote_identifier(&column.name, ctx.target)
+                    ))
+                })
+                .collect::<Result<Vec<_>, DiagnosticBundle>>()?;
             Ok(format!(
                 "SELECT {} FROM ({}) AS q",
                 values.join(", "),
@@ -100,13 +109,22 @@ fn render_relation(
             ))
         }
         RelationNode::Distinct {
-            input, expressions, ..
+            input,
+            expressions,
+            columns,
         } => {
             let inner = render_relation(input, ctx)?;
             let values = expressions
                 .iter()
-                .map(|expr| render_expr(expr, ctx, "q"))
-                .collect::<Result<Vec<_>, _>>()?;
+                .zip(columns)
+                .map(|(expr, column)| {
+                    Ok(format!(
+                        "{} AS {}",
+                        render_expr(expr, ctx, "q")?,
+                        quote_identifier(&column.name, ctx.target)
+                    ))
+                })
+                .collect::<Result<Vec<_>, DiagnosticBundle>>()?;
             Ok(format!(
                 "SELECT DISTINCT {} FROM ({}) AS q",
                 values.join(", "),

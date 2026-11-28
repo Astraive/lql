@@ -63,6 +63,7 @@ pub enum RelationNode {
     Scan {
         source: String,
         columns: Vec<TypedColumn>,
+        physical_columns: Vec<(String, String)>,
     },
     Filter {
         input: Box<RelationNode>,
@@ -278,9 +279,23 @@ pub fn analyze(
     }
     let mut columns = schema_columns(&options.schema);
     validate_policy_fields(pipeline, &options.policy)?;
+    let physical_columns = columns
+        .iter()
+        .map(|column| {
+            (
+                column.name.clone(),
+                options
+                    .schema
+                    .physical_column(&column.name)
+                    .unwrap_or(&column.name)
+                    .to_string(),
+            )
+        })
+        .collect();
     let mut root = RelationNode::Scan {
-        source: source_name.to_string(),
+        source: options.schema.table.clone(),
         columns: columns.clone(),
+        physical_columns,
     };
     for statement in pipeline.statements.iter().skip(1) {
         root = match statement {

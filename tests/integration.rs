@@ -97,6 +97,36 @@ fn project_specific_fields() {
 }
 
 #[test]
+fn schema_physical_table_and_column_mapping_are_rendered() {
+    let document = serde_json::json!({
+        "schema_version": "v1",
+        "sources": {
+            "events": {
+                "physical": "audit_events",
+                "fields": [{
+                    "name": "service",
+                    "field_type": "string",
+                    "physical": {"column": "svc", "storage": "projection"}
+                }]
+            }
+        }
+    });
+    let schema = Schema::from_document(&document, "events").unwrap();
+    let plan = lql::render_query_with_options(
+        "from events | project service",
+        Target::DuckDB,
+        &serde_json::Value::Null,
+        &serde_json::Value::Null,
+        schema,
+        QueryPolicy::default(),
+    )
+    .unwrap();
+    assert!(plan.sql.contains("audit_events"));
+    assert!(plan.sql.contains("\"svc\" AS \"service\""));
+    assert!(!plan.sql.contains("FROM \"events\""));
+}
+
+#[test]
 fn timeseries_5m() {
     let sql = compile_to_duckdb("from events | timeseries 5m").unwrap();
     assert!(sql.contains("time_bucket((5 * INTERVAL '1 minute')"));

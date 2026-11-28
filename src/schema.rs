@@ -39,7 +39,15 @@ pub struct Schema {
     physical_columns: HashMap<String, (String, String)>,
 }
 
+
 impl Schema {
+    /// Physical storage column for a logical field, if explicitly mapped.
+    pub fn physical_column(&self, logical: &str) -> Option<&str> {
+        self.physical_columns
+            .get(logical)
+            .map(|(physical, _)| physical.as_str())
+    }
+
     /// Create the default DuckDB schema (used by the collector).
     pub fn duckdb_default() -> Self {
         let mut columns = HashMap::new();
